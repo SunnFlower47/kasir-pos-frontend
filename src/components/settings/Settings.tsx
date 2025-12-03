@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiService } from '../../services/api';
+import { printerService } from '../../services/printerService';
 import toast from 'react-hot-toast';
 import {
   CogIcon,
@@ -21,6 +22,17 @@ interface SystemSettings {
   auto_backup: boolean;
   email_notifications: boolean;
   sms_notifications: boolean;
+  // Printer Settings
+  printer_name: string;
+  printer_type: string;
+  paper_size: string;
+  print_logo: boolean;
+  print_header: boolean;
+  print_footer: boolean;
+  font_size: string;
+  print_copies: number;
+  auto_print: boolean;
+  print_customer_copy: boolean;
 }
 
 const Settings: React.FC = () => {
@@ -35,7 +47,18 @@ const Settings: React.FC = () => {
     low_stock_threshold: 10,
     auto_backup: false,
     email_notifications: true,
-    sms_notifications: false
+    sms_notifications: false,
+    // Printer Settings Default Values
+    printer_name: 'Default Printer',
+    printer_type: 'thermal',
+    paper_size: '58mm',
+    print_logo: true,
+    print_header: true,
+    print_footer: true,
+    font_size: 'normal',
+    print_copies: 1,
+    auto_print: false,
+    print_customer_copy: false
   });
 
   const [loading, setLoading] = useState(true);
@@ -59,7 +82,6 @@ const Settings: React.FC = () => {
   const fetchSettings = async () => {
     setLoading(true);
     try {
-      console.log('🔄 Fetching system settings...');
       const response = await apiService.getSettings();
 
       if (response.success && response.data) {
@@ -98,7 +120,18 @@ const Settings: React.FC = () => {
                 'low_stock_threshold': 'low_stock_threshold',
                 'auto_backup': 'auto_backup',
                 'email_notifications': 'email_notifications',
-                'sms_notifications': 'sms_notifications'
+                'sms_notifications': 'sms_notifications',
+                // Printer Settings Mapping
+                'printer_name': 'printer_name',
+                'printer_type': 'printer_type',
+                'paper_size': 'paper_size',
+                'print_logo': 'print_logo',
+                'print_header': 'print_header',
+                'print_footer': 'print_footer',
+                'font_size': 'font_size',
+                'print_copies': 'print_copies',
+                'auto_print': 'auto_print',
+                'print_customer_copy': 'print_customer_copy'
               };
 
               const mappedKey = keyMapping[key];
@@ -110,7 +143,6 @@ const Settings: React.FC = () => {
         });
 
         setSettings(prev => ({ ...prev, ...flatSettings }));
-        console.log('✅ Settings loaded:', flatSettings);
       }
     } catch (error: any) {
       console.error('❌ Error fetching settings:', error);
@@ -130,7 +162,6 @@ const Settings: React.FC = () => {
   const handleSave = async () => {
     setSaving(true);
     try {
-      console.log('💾 Saving settings:', settings);
 
       // Convert settings to backend format
       const settingsArray = Object.entries(settings).map(([key, value]) => {
@@ -173,18 +204,38 @@ const Settings: React.FC = () => {
     }
   };
 
-  const handleTestPrint = () => {
-    console.log('Testing printer...');
-    toast.success('Fitur test printer akan segera tersedia');
+  const handleTestPrint = async () => {
+    try {
+
+      // Save current settings first
+      await handleSave();
+
+      toast.loading('Melakukan test print...', { id: 'test-print' });
+
+      // Use printer service for test print
+      const success = await printerService.testPrint();
+
+      toast.dismiss('test-print');
+
+      if (success) {
+        toast.success('Test print berhasil! Silakan cek printer Anda.');
+      } else {
+        toast.error('Test print gagal. Periksa koneksi printer Anda.');
+      }
+    } catch (error: any) {
+      toast.dismiss('test-print');
+      console.error('Test print error:', error);
+      toast.error('Gagal melakukan test print: ' + error.message);
+    }
   };
+
+
 
   const fetchSystemInfo = async () => {
     try {
-      console.log('🔄 Fetching system info...');
       const response = await apiService.get('/system/info');
       if (response.success) {
         setSystemInfo(response.data);
-        console.log('✅ System info loaded:', response.data);
       }
     } catch (error) {
       console.error('❌ Error fetching system info:', error);
@@ -194,11 +245,9 @@ const Settings: React.FC = () => {
 
   const fetchBackups = async () => {
     try {
-      console.log('🔄 Fetching backups...');
       const response = await apiService.get('/system/backups');
       if (response.success) {
         setBackups(response.data || []);
-        console.log('✅ Backups loaded:', response.data);
       }
     } catch (error) {
       console.error('❌ Error fetching backups:', error);
@@ -209,7 +258,6 @@ const Settings: React.FC = () => {
   const handleCreateBackup = async () => {
     setBackupLoading(true);
     try {
-      console.log('💾 Creating backup...');
       const response = await apiService.post('/system/backup');
       if (response.success) {
         toast.success('✅ Backup berhasil dibuat');
@@ -228,7 +276,6 @@ const Settings: React.FC = () => {
 
   const handleDownloadBackup = async (filename: string) => {
     try {
-      console.log('⬇️ Downloading backup:', filename);
       const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:8000/api/v1'}/system/backups/${filename}/download`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
@@ -261,7 +308,6 @@ const Settings: React.FC = () => {
     }
 
     try {
-      console.log('🗑️ Deleting backup:', filename);
       const response = await apiService.delete(`/system/backups/${filename}`);
       if (response.success) {
         toast.success('✅ Backup berhasil dihapus');
@@ -459,8 +505,9 @@ const Settings: React.FC = () => {
           {/* Receipt Settings */}
           {activeTab === 'receipt' && (
             <div className="space-y-6">
+              {/* Receipt Content Settings */}
               <div>
-                <h3 className="text-lg font-medium text-gray-900 mb-4">Pengaturan Struk</h3>
+                <h3 className="text-lg font-medium text-gray-900 mb-4">Pengaturan Konten Struk</h3>
 
                 <div className="space-y-4">
                   <div>
@@ -479,19 +526,188 @@ const Settings: React.FC = () => {
                     </p>
                   </div>
 
+                  {/* Print Options */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                      <div>
+                        <h4 className="font-medium text-gray-900">Cetak Logo</h4>
+                        <p className="text-sm text-gray-600">Tampilkan logo perusahaan di struk</p>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={settings.print_logo}
+                          onChange={(e) => handleInputChange('print_logo', e.target.checked)}
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
+                      </label>
+                    </div>
+
+                    <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                      <div>
+                        <h4 className="font-medium text-gray-900">Cetak Header</h4>
+                        <p className="text-sm text-gray-600">Tampilkan informasi perusahaan</p>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={settings.print_header}
+                          onChange={(e) => handleInputChange('print_header', e.target.checked)}
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
+                      </label>
+                    </div>
+
+                    <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                      <div>
+                        <h4 className="font-medium text-gray-900">Cetak Footer</h4>
+                        <p className="text-sm text-gray-600">Tampilkan footer custom</p>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={settings.print_footer}
+                          onChange={(e) => handleInputChange('print_footer', e.target.checked)}
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
+                      </label>
+                    </div>
+
+                    <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                      <div>
+                        <h4 className="font-medium text-gray-900">Auto Print</h4>
+                        <p className="text-sm text-gray-600">Cetak otomatis setelah transaksi</p>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={settings.auto_print}
+                          onChange={(e) => handleInputChange('auto_print', e.target.checked)}
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Printer Configuration */}
+              <div>
+                <h3 className="text-lg font-medium text-gray-900 mb-4">Konfigurasi Printer</h3>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Nama Printer
+                    </label>
+                    <input
+                      type="text"
+                      value={settings.printer_name}
+                      onChange={(e) => handleInputChange('printer_name', e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                      placeholder="Default Printer"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Tipe Printer
+                    </label>
+                    <select
+                      value={settings.printer_type}
+                      onChange={(e) => handleInputChange('printer_type', e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    >
+                      <option value="thermal">Thermal Printer</option>
+                      <option value="inkjet">Inkjet Printer</option>
+                      <option value="laser">Laser Printer</option>
+                      <option value="dot_matrix">Dot Matrix Printer</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Ukuran Kertas
+                    </label>
+                    <select
+                      value={settings.paper_size}
+                      onChange={(e) => handleInputChange('paper_size', e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    >
+                      <option value="58mm">58mm (Thermal)</option>
+                      <option value="80mm">80mm (Thermal)</option>
+                      <option value="a4">A4 (210 x 297 mm)</option>
+                      <option value="a5">A5 (148 x 210 mm)</option>
+                      <option value="letter">Letter (8.5 x 11 inch)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Ukuran Font
+                    </label>
+                    <select
+                      value={settings.font_size}
+                      onChange={(e) => handleInputChange('font_size', e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    >
+                      <option value="small">Kecil</option>
+                      <option value="normal">Normal</option>
+                      <option value="large">Besar</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Jumlah Salinan
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="5"
+                      value={settings.print_copies}
+                      onChange={(e) => handleInputChange('print_copies', parseInt(e.target.value))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    />
+                  </div>
+
                   <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
                     <div>
-                      <h4 className="font-medium text-gray-900">Test Printer</h4>
-                      <p className="text-sm text-gray-600">Cetak struk test untuk memastikan printer berfungsi</p>
+                      <h4 className="font-medium text-gray-900">Salinan Customer</h4>
+                      <p className="text-sm text-gray-600">Cetak salinan untuk customer</p>
                     </div>
-                    <button
-                      onClick={handleTestPrint}
-                      className="btn btn-secondary flex items-center gap-2"
-                    >
-                      <PrinterIcon className="h-4 w-4" />
-                      Test Print
-                    </button>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settings.print_customer_copy}
+                        onChange={(e) => handleInputChange('print_customer_copy', e.target.checked)}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
+                    </label>
                   </div>
+                </div>
+              </div>
+
+              {/* Test Print Section */}
+              <div>
+                <h3 className="text-lg font-medium text-gray-900 mb-4">Test Printer</h3>
+                <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                  <div>
+                    <h4 className="font-medium text-gray-900">Test Print</h4>
+                    <p className="text-sm text-gray-600">Cetak struk test untuk memastikan printer berfungsi dengan pengaturan saat ini</p>
+                  </div>
+                  <button
+                    onClick={handleTestPrint}
+                    className="btn btn-secondary flex items-center gap-2"
+                  >
+                    <PrinterIcon className="h-4 w-4" />
+                    Test Print
+                  </button>
                 </div>
               </div>
             </div>

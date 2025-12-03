@@ -61,6 +61,7 @@ export interface ReportFilters {
   customDateTo: string;
   transactionStatus: string;
   paymentMethod: string;
+  supplierId: number | null;
 }
 
 export interface UseReportDataReturn {
@@ -70,6 +71,7 @@ export interface UseReportDataReturn {
   topProducts: TopProduct[];
   chartData: ChartData[];
   outlets: Outlet[];
+  suppliers: any[];
 
   // Filters
   filters: ReportFilters;
@@ -87,7 +89,8 @@ const initialFilters: ReportFilters = {
   customDateFrom: '',
   customDateTo: '',
   transactionStatus: '',
-  paymentMethod: ''
+  paymentMethod: '',
+  supplierId: null
 };
 
 const initialStats: ReportStats = {
@@ -105,6 +108,7 @@ export const useReportData = (): UseReportDataReturn => {
   const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
   const [chartData, setChartData] = useState<ChartData[]>([]);
   const [outlets, setOutlets] = useState<Outlet[]>([]);
+  const [suppliers, setSuppliers] = useState<any[]>([]);
   const [filters, setFiltersState] = useState<ReportFilters>(initialFilters);
 
   // Calculate date range based on filter
@@ -163,11 +167,15 @@ export const useReportData = (): UseReportDataReturn => {
       outlet_id: filters.selectedOutlet || undefined,
       status: filters.transactionStatus || undefined,
       payment_method: filters.paymentMethod || undefined,
+      supplier_id: filters.supplierId || undefined,
       group_by: 'day'
     };
 
-    // Only add date filters if they are not empty
-    if (dateFrom && dateTo) {
+    // Add date filters based on dateRange
+    if (filters.dateRange === 'all') {
+      // Send special parameter to indicate "all data"
+      params.show_all_data = true;
+    } else if (dateFrom && dateTo) {
       params.date_from = dateFrom;
       params.date_to = dateTo;
     }
@@ -177,41 +185,29 @@ export const useReportData = (): UseReportDataReturn => {
 
   // Process stats data based on report type
   const processStatsData = useCallback((responseData: any, reportType: string, dashboardData?: any): ReportStats => {
-    console.log('🔍 processStatsData input:', { responseData, reportType });
-
-    // Handle different response structures
-    let summary;
-    if (reportType === 'profit') {
-      // Profit response has data directly, not in summary
-      summary = responseData;
-    } else {
-      // Other reports have summary object
-      summary = responseData?.summary;
-    }
+    // All reports now have consistent summary structure
+    const summary = responseData?.summary;
 
     if (!summary) {
-      console.warn('⚠️ No summary data found for', reportType);
       return initialStats;
     }
-
-    console.log('🔍 Summary data:', summary);
 
     switch (reportType) {
       case 'sales':
         return {
           totalRevenue: summary.total_revenue || 0,
           totalTransactions: summary.total_transactions || 0,
-          totalCustomers: summary.unique_customers || 0,
-          totalProducts: summary.products_sold || 0,
+          totalCustomers: summary.customers_with_transactions || 0,
+          totalProducts: summary.total_products || 0,
           avgTransactionValue: summary.avg_transaction_value || 0,
-          growth: 0,
+          growth: summary.growth || 0,
         };
 
       case 'purchases':
         return {
           totalRevenue: summary.total_amount || 0,
           totalTransactions: summary.total_purchases || 0,
-          totalCustomers: summary.total_suppliers || 0, // Use suppliers count
+          totalCustomers: summary.total_suppliers || 0,
           totalProducts: summary.total_items || 0,
           avgTransactionValue: summary.avg_purchase_value || 0,
           growth: 0,
@@ -264,10 +260,37 @@ export const useReportData = (): UseReportDataReturn => {
     console.log('🔍 processChartData input:', { responseData, reportType });
 
     if (reportType === 'stocks') {
-      // For stocks, create a single summary point
-      if (responseData.summary) {
+      // For stocks, use grouped_data for daily chart or fallback to stocks array
+      if (responseData.grouped_data && Array.isArray(responseData.grouped_data)) {
+        return responseData.grouped_data.map((item: any) => ({
+          date: item.date || item.period || 'Data',
+          fullDate: item.period || item.date || new Date().toISOString().split('T')[0],
+          revenue: item.net_movement || item.stock_in || item.stock_out || 0,
+          transactions: item.movements_count || 0,
+          label: 'Stock Movement'
+        }));
+      } else if (responseData.stocks && Array.isArray(responseData.stocks)) {
+        // Group by category or outlet for chart
+        const stocksByCategory = responseData.stocks.reduce((acc: any, stock: any) => {
+          const key = stock.category_name || 'Unknown';
+          if (!acc[key]) {
+            acc[key] = { total_value: 0, total_quantity: 0 };
+          }
+          acc[key].total_value += stock.stock_value || 0;
+          acc[key].total_quantity += stock.quantity || 0;
+          return acc;
+        }, {});
+
+        return Object.entries(stocksByCategory).map(([category, data]: [string, any]) => ({
+          date: category,
+          fullDate: new Date().toISOString().split('T')[0],
+          revenue: data.total_value,
+          transactions: data.total_quantity,
+          label: 'Nilai Stok'
+        }));
+      } else if (responseData.summary) {
         return [{
-          date: 'Saat Ini',
+          date: 'Total Stok',
           fullDate: new Date().toISOString().split('T')[0],
           revenue: responseData.summary.total_stock_value || 0,
           transactions: responseData.summary.total_products || 0,
@@ -281,16 +304,51 @@ export const useReportData = (): UseReportDataReturn => {
     let chartDataSource;
     if (reportType === 'expenses' && responseData.monthly_breakdown) {
       chartDataSource = responseData.monthly_breakdown;
+    } else if (reportType === 'purchases') {
+      // For purchases, try multiple sources and create chart data from available data
+      if (responseData.monthly_breakdown && Array.isArray(responseData.monthly_breakdown)) {
+        chartDataSource = responseData.monthly_breakdown;
+      } else if (responseData.grouped_data && Array.isArray(responseData.grouped_data)) {
+        chartDataSource = responseData.grouped_data;
+      } else if (responseData.top_suppliers && Array.isArray(responseData.top_suppliers)) {
+        // Create chart data from top suppliers
+        chartDataSource = responseData.top_suppliers.map((supplier: any, index: number) => ({
+          date: supplier.supplier_name || `Supplier ${index + 1}`,
+          total_amount: supplier.total_amount || supplier.total_cost || 0,
+          total_quantity: supplier.total_quantity || 0,
+          transactions_count: 1
+        }));
+      } else if (responseData.summary) {
+        // Create single data point from summary
+        chartDataSource = [{
+          date: 'Total Pembelian',
+          total_amount: responseData.summary.total_purchases || responseData.summary.total_amount || 0,
+          total_quantity: responseData.summary.total_items || 0,
+          transactions_count: responseData.summary.total_transactions || 1
+        }];
+      } else {
+        chartDataSource = [];
+      }
     } else if (reportType === 'profit') {
-      // For profit, create single data point from summary
-      const summary = responseData;
-      return [{
-        date: 'Total',
-        fullDate: new Date().toISOString().split('T')[0],
-        revenue: summary.net_profit || 0,
-        transactions: summary.total_transactions || 0,
-        label: 'Profit'
-      }];
+      // For profit, try multiple sources
+      if (responseData.grouped_data && Array.isArray(responseData.grouped_data)) {
+        chartDataSource = responseData.grouped_data;
+      } else if (responseData.daily_profit && Array.isArray(responseData.daily_profit)) {
+        chartDataSource = responseData.daily_profit;
+      } else if (responseData.monthly_profit && Array.isArray(responseData.monthly_profit)) {
+        chartDataSource = responseData.monthly_profit;
+      } else if (responseData.summary) {
+        // Create single data point from summary
+        chartDataSource = [{
+          date: 'Total Profit',
+          net_profit: responseData.summary.net_profit || responseData.summary.total_profit || 0,
+          total_revenue: responseData.summary.total_revenue || 0,
+          total_cost: responseData.summary.total_cost || 0,
+          transactions_count: responseData.summary.total_transactions || 1
+        }];
+      } else {
+        chartDataSource = [];
+      }
     } else {
       chartDataSource = responseData.grouped_data;
     }
@@ -325,18 +383,18 @@ export const useReportData = (): UseReportDataReturn => {
           label = 'Revenue';
           break;
         case 'purchases':
-          value = Number(item.total_amount) || 0;
-          transactionCount = Number(item.total_purchases) || 0;
+          value = Number(item.total_amount) || Number(item.total_cost) || Number(item.total_paid) || 0;
+          transactionCount = Number(item.transactions_count) || Number(item.purchase_count) || Number(item.total_purchases) || 0;
           label = 'Purchase Cost';
           break;
         case 'expenses':
-          value = Number(item.total_amount) || 0;
-          transactionCount = Number(item.purchase_count) || 0;
+          value = Number(item.total_amount) || Number(item.total_paid) || 0;
+          transactionCount = Number(item.purchase_count) || Number(item.transactions_count) || 0;
           label = 'Expenses';
           break;
         case 'profit':
-          value = Number(item.total_profit) || 0;
-          transactionCount = Number(item.transactions_count) || 0;
+          value = Number(item.net_profit) || Number(item.total_profit) || (Number(item.total_revenue) - Number(item.total_cogs)) || 0;
+          transactionCount = Number(item.transactions_count) || Number(item.total_transactions) || 0;
           label = 'Profit';
           break;
         default:
@@ -356,88 +414,111 @@ export const useReportData = (): UseReportDataReturn => {
     });
   }, []);
 
-  // Process top products data
+  // Process top products data - All reports now have consistent top_products structure
   const processTopProductsData = useCallback((responseData: any, reportType: string): TopProduct[] => {
-    switch (reportType) {
-      case 'sales':
-        if (Array.isArray(responseData)) {
-          return responseData.slice(0, 5).map((item: any) => ({
-            id: item.id || Math.random(),
-            name: item.name || item.product_name || 'Unknown Product',
-            total_sold: item.total_sold || item.quantity_sold || 0,
-            total_revenue: item.total_revenue || item.revenue || 0,
-            category_name: item.category_name || item.category || 'Unknown'
-          }));
-        }
-        break;
+    // Handle different data sources for different report types
+    let topProducts;
 
-      case 'purchases':
-        if (responseData.top_items && Array.isArray(responseData.top_items)) {
-          return responseData.top_items.slice(0, 5).map((item: any) => ({
-            id: item.id || Math.random(),
-            name: item.name || 'Unknown Product',
-            total_sold: item.total_quantity || 0,
-            total_revenue: item.total_cost || 0,
-            total_amount: item.total_cost || 0,
-            category_name: 'Product',
-            sku: item.sku || '',
-            purchase_quantity: item.total_quantity || 0,
-            purchase_cost: item.total_cost || 0,
-            avg_unit_price: item.avg_unit_price || 0
-          }));
-        }
-        break;
+    if (reportType === 'stocks') {
+      // For stocks, use stocks array from API
+      topProducts = responseData?.stocks || responseData?.data || [];
+    } else if (reportType === 'purchases') {
+      // For purchases, use multiple sources
+      topProducts = responseData?.top_items || responseData?.top_products || responseData?.top_suppliers || [];
 
-      case 'expenses':
-        if (responseData.top_items && Array.isArray(responseData.top_items)) {
-          return responseData.top_items.slice(0, 5).map((item: any) => ({
-            id: item.id || Math.random(),
-            name: item.product_name || item.name || 'Unknown Product',
-            total_sold: item.total_quantity || 0,
-            total_revenue: item.total_cost || 0,
-            category_name: 'Expense Item',
-            sku: item.sku || '',
-            purchase_quantity: item.total_quantity || 0,
-            purchase_cost: item.total_cost || 0,
-            supplier_name: item.supplier_name || 'Unknown Supplier',
-          }));
+      // If no top data, create from summary
+      if (!topProducts || topProducts.length === 0) {
+        if (responseData?.summary && responseData.summary.total_purchases > 0) {
+          topProducts = [{
+            id: 1,
+            name: 'Total Pembelian',
+            total_amount: responseData.summary.total_purchases || responseData.summary.total_amount || 0,
+            total_quantity: responseData.summary.total_items || 0,
+            supplier_name: 'Semua Supplier'
+          }];
         }
-        break;
+      }
+    } else {
+      // For sales and profit, use top_products
+      topProducts = responseData?.top_products || [];
 
-      case 'stocks':
-        if (responseData.stocks) {
-          const stocksData = responseData.stocks.data || responseData.stocks;
-          if (Array.isArray(stocksData)) {
-            return stocksData.slice(0, 5).map((stock: any, index: number) => ({
-              id: stock.id || `stock-${index}`,
-              name: stock.product_name || 'Unknown Product',
-              total_sold: stock.quantity || 0,
-              total_revenue: stock.stock_value || 0,
-              category_name: stock.category_name || 'Unknown',
-              quantity: stock.quantity || 0,
-              min_stock: stock.min_stock || 0,
-              is_low_stock: stock.is_low_stock || 0
-            }));
-          }
+      // If no top products, create from summary for profit
+      if (reportType === 'profit' && (!topProducts || topProducts.length === 0)) {
+        if (responseData?.summary && responseData.summary.net_profit > 0) {
+          topProducts = [{
+            id: 1,
+            name: 'Total Profit',
+            profit_amount: responseData.summary.net_profit || 0,
+            total_revenue: responseData.summary.total_revenue || 0,
+            total_cost: responseData.summary.total_cost || 0
+          }];
         }
-        break;
-
-      case 'profit':
-        if (Array.isArray(responseData)) {
-          return responseData.slice(0, 5).map((item: any) => ({
-            id: item.id || Math.random(),
-            name: item.name || item.product_name || 'Unknown Product',
-            total_sold: item.total_sold || 0,
-            total_revenue: item.total_revenue || 0,
-            category_name: item.category_name || 'Unknown',
-            total_cost: item.total_cost || 0,
-            profit_amount: item.profit_amount || 0
-          }));
-        }
-        break;
+      }
     }
 
-    return [];
+    if (!Array.isArray(topProducts)) {
+      console.warn('⚠️ Top products is not an array:', topProducts);
+      return [];
+    }
+
+    return topProducts.slice(0, 5).map((item: any, index: number) => {
+      // Base mapping
+      const baseData = {
+        id: item.id || `item-${index}`,
+        name: item.name || item.product_name || item.supplier_name || 'Unknown Item',
+        category_name: item.category_name || 'Unknown Category',
+        sku: item.sku || '',
+      };
+
+      // Report-specific mapping
+      if (reportType === 'purchases') {
+        return {
+          ...baseData,
+          total_sold: item.total_quantity || item.purchase_quantity || 0,
+          total_revenue: item.total_amount || item.total_cost || item.purchase_cost || 0,
+          purchase_quantity: item.total_quantity || item.purchase_quantity || 0,
+          purchase_cost: item.total_amount || item.total_cost || item.purchase_cost || 0,
+          avg_unit_price: item.avg_unit_price || 0,
+          supplier_name: item.supplier_name || '',
+          stock_value: item.total_amount || item.total_cost || 0
+        };
+      } else if (reportType === 'stocks') {
+        return {
+          ...baseData,
+          total_sold: item.movement_count || item.net_movement || item.quantity || 0,
+          total_revenue: item.stock_value || item.net_movement || (item.quantity * item.selling_price) || 0,
+          stock_value: item.stock_value || item.net_movement || 0,
+          quantity: item.quantity || item.stock_quantity || 0,
+          selling_price: item.selling_price || 0,
+          purchase_price: item.purchase_price || 0,
+          outlet_name: item.outlet_name || '',
+          is_low_stock: item.is_low_stock || 0,
+          min_stock: item.min_stock || 0,
+          // Stock movement specific fields
+          stock_in: item.stock_in || 0,
+          stock_out: item.stock_out || 0,
+          net_movement: item.net_movement || 0,
+          movement_count: item.movement_count || 0
+        };
+      } else if (reportType === 'profit') {
+        return {
+          ...baseData,
+          total_sold: item.total_sold || item.total_quantity || 0,
+          total_revenue: item.total_revenue || 0,
+          total_cost: item.total_cost || 0,
+          profit_amount: item.profit_amount || item.total_profit || item.net_profit || (item.total_revenue - item.total_cost) || 0
+        };
+      } else {
+        // Default for sales
+        return {
+          ...baseData,
+          total_sold: item.total_sold || item.total_quantity || 0,
+          total_revenue: item.total_revenue || item.total_amount || 0,
+          purchase_quantity: item.total_sold || item.total_quantity || 0,
+          purchase_cost: item.total_revenue || item.total_cost || 0
+        };
+      }
+    });
   }, []);
 
   // Main fetch function
@@ -450,21 +531,15 @@ export const useReportData = (): UseReportDataReturn => {
     setTopProducts([]);
 
     try {
-      console.log(`🔄 Fetching ${filters.reportType} report data...`);
-      console.log('🔍 Current filters:', filters);
-
       const params = buildApiParams(filters);
-      console.log('📊 API Parameters:', params);
-      console.log('📊 Date range calculation:', {
-        dateRange: filters.dateRange,
-        customDateFrom: filters.customDateFrom,
-        customDateTo: filters.customDateTo
-      });
+
+      // Add delay to prevent rate limiting
+      await delay(100);
 
       // Fetch data based on report type
       let reportResponse, dashboardResponse, outletsResponse;
 
-      const [reportRes, dashboardRes, outletsRes] = await Promise.all([
+      const [reportRes, dashboardRes, outletsRes, suppliersRes] = await Promise.all([
         filters.reportType === 'sales' ? apiService.getSalesReport(params) :
         filters.reportType === 'purchases' ? apiService.getPurchasesReport(params) :
         filters.reportType === 'expenses' ? apiService.getExpensesReport(params) :
@@ -472,22 +547,25 @@ export const useReportData = (): UseReportDataReturn => {
         filters.reportType === 'profit' ? apiService.getProfitReport(params) :
         apiService.getSalesReport(params),
         apiService.getDashboard(),
-        apiService.getOutlets()
+        apiService.getOutlets(),
+        apiService.getSuppliers()
       ]);
 
       reportResponse = reportRes;
       dashboardResponse = dashboardRes;
       outletsResponse = outletsRes;
 
+      // Set suppliers
+      if (suppliersRes.success && suppliersRes.data) {
+        setSuppliers(suppliersRes.data.data || suppliersRes.data);
+      }
+
       // Process data
       if (reportResponse.success && reportResponse.data) {
         console.log('🔍 Raw Report Response:', reportResponse.data);
-        console.log('🔍 Report Type:', filters.reportType);
-
         // Process stats
         const processedStats = processStatsData(reportResponse.data, filters.reportType, dashboardResponse.data);
         setStats(processedStats);
-        console.log('📊 Processed Stats:', processedStats);
 
         // Process chart data
         const processedChartData = processChartData(reportResponse.data, filters.reportType);
@@ -512,7 +590,7 @@ export const useReportData = (): UseReportDataReturn => {
         setOutlets(Array.isArray(outletsData) ? outletsData : []);
       }
 
-      toast.success('Data laporan berhasil dimuat');
+      
     } catch (error: any) {
       console.error('❌ Error fetching report data:', error);
       const message = error.response?.data?.message || error.message || 'Gagal memuat data laporan';
@@ -523,15 +601,21 @@ export const useReportData = (): UseReportDataReturn => {
     } finally {
       setLoading(false);
     }
-  }, [buildApiParams, processStatsData, processChartData, processTopProductsData]);
+  }, [filters, buildApiParams, processStatsData, processChartData, processTopProductsData]);
+
+  // Add delay to prevent rate limiting
+  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
   // Fetch data for specific report type (for immediate refresh)
   const fetchDataForReportType = useCallback(async (updatedFilters: ReportFilters, params: any) => {
     try {
       console.log(`🔄 Fetching ${updatedFilters.reportType} report data immediately...`);
 
+      // Add small delay to prevent rate limiting (30 requests/minute = 2 seconds between requests)
+      await delay(100);
+
       // Fetch data based on report type
-      const [reportRes, dashboardRes, outletsRes] = await Promise.all([
+      const [reportRes, , outletsRes] = await Promise.all([
         updatedFilters.reportType === 'sales' ? apiService.getSalesReport(params) :
         updatedFilters.reportType === 'purchases' ? apiService.getPurchasesReport(params) :
         updatedFilters.reportType === 'expenses' ? apiService.getExpensesReport(params) :
@@ -560,7 +644,6 @@ export const useReportData = (): UseReportDataReturn => {
         setOutlets(Array.isArray(outletsData) ? outletsData : []);
       }
 
-      console.log('✅ Data fetched successfully for report type:', updatedFilters.reportType);
     } catch (error: any) {
       console.error('❌ Error fetching report data:', error);
       setStats(null);
@@ -591,7 +674,6 @@ export const useReportData = (): UseReportDataReturn => {
         // Fetch new data with updated filters
         setTimeout(() => {
           const params = buildApiParams(updated);
-          console.log('📊 Fetching data with new report type:', updated.reportType);
 
           // Call API directly with new filters
           fetchDataForReportType(updated, params);
@@ -611,7 +693,7 @@ export const useReportData = (): UseReportDataReturn => {
   useEffect(() => {
     console.log('🔄 Filters changed, fetching data:', filters);
     fetchReportData();
-  }, [filters.reportType, filters.dateRange, filters.customDateFrom, filters.customDateTo, filters.selectedOutlet, fetchReportData]);
+  }, [filters, fetchReportData]);
 
   return {
     // Data
@@ -620,6 +702,7 @@ export const useReportData = (): UseReportDataReturn => {
     topProducts,
     chartData,
     outlets,
+    suppliers,
 
     // Filters
     filters,

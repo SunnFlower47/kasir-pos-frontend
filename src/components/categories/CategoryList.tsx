@@ -2,7 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Category } from '../../types';
 import { apiService } from '../../services/api';
 import toast from 'react-hot-toast';
+import { invalidateCategoryCache, invalidateProductCache } from '../../utils/cacheInvalidation';
 import CategoryForm from './CategoryForm';
+import Pagination, { PaginationData } from '../common/Pagination';
 import {
   PlusIcon,
   PencilIcon,
@@ -16,20 +18,52 @@ const CategoryList: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
+  const [pagination, setPagination] = useState<PaginationData>({
+    current_page: 1,
+    last_page: 1,
+    per_page: 15,
+    total: 0
+  });
 
-  const fetchCategories = useCallback(async () => {
+  const fetchCategories = useCallback(async (page = 1) => {
     setLoading(true);
     try {
-      const params: any = {};
+      const params: any = {
+        page,
+        per_page: pagination.per_page
+      };
       if (searchTerm) params.search = searchTerm;
 
       const response = await apiService.get('/categories', params);
 
       if (response.success && response.data) {
-        const categoriesData = response.data.data || response.data;
-        const categoriesArray = Array.isArray(categoriesData) ? categoriesData : [];
-        setCategories(categoriesArray);
-        console.log('✅ Categories loaded:', categoriesArray.length, 'items');
+        const responseData: any = response.data;
+        
+        // Check if it's paginated response (Laravel pagination format)
+        if (responseData && typeof responseData === 'object' && 'data' in responseData && 'total' in responseData) {
+          const categoriesArray = Array.isArray(responseData.data) ? responseData.data : [];
+          setCategories(categoriesArray);
+          
+          // Update pagination state
+          setPagination({
+            current_page: responseData.current_page ?? page,
+            last_page: responseData.last_page ?? Math.ceil((responseData.total || 0) / (responseData.per_page || pagination.per_page)),
+            per_page: responseData.per_page ?? pagination.per_page,
+            total: responseData.total ?? 0
+          });
+        } else if (Array.isArray(responseData)) {
+          // Direct array format (fallback)
+          setCategories(responseData);
+          setPagination(prev => ({
+            ...prev,
+            current_page: page,
+            total: responseData.length
+          }));
+        } else {
+          const categoriesData = responseData.data || responseData;
+          const categoriesArray = Array.isArray(categoriesData) ? categoriesData : [];
+          setCategories(categoriesArray);
+        }
       } else {
         console.warn('⚠️ Categories API failed:', response?.message);
         setCategories([]);
@@ -41,15 +75,15 @@ const CategoryList: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [searchTerm]);
+  }, [searchTerm, pagination.per_page]);
 
   useEffect(() => {
-    fetchCategories();
+    fetchCategories(1); // Reset to page 1 on initial load
   }, [fetchCategories]);
 
   useEffect(() => {
     const timeoutId = setTimeout(() => {
-      fetchCategories();
+      fetchCategories(1); // Reset to page 1 when search term changes
     }, 500);
 
     return () => clearTimeout(timeoutId);
@@ -75,7 +109,10 @@ const CategoryList: React.FC = () => {
 
       if (response.success) {
         toast.success('Kategori berhasil dihapus');
-        fetchCategories();
+        // Invalidate cache and refresh
+        invalidateCategoryCache();
+        invalidateProductCache(); // Products depend on categories
+        fetchCategories(pagination.current_page);
       } else {
         toast.error(response.message || 'Gagal menghapus kategori');
       }
@@ -90,12 +127,15 @@ const CategoryList: React.FC = () => {
   };
 
   const handleFormSuccess = () => {
-    fetchCategories();
+    // Invalidate cache before refreshing
+    invalidateCategoryCache();
+    invalidateProductCache(); // Products depend on categories
+    fetchCategories(pagination.current_page);
   };
 
-  const filteredCategories = categories.filter(category =>
-    !searchTerm || category.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const handlePageChange = (page: number) => {
+    fetchCategories(page);
+  };
 
   if (loading) {
     return (
@@ -160,7 +200,7 @@ const CategoryList: React.FC = () => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredCategories.length === 0 ? (
+              {categories.length === 0 ? (
                 <tr>
                   <td colSpan={4} className="px-6 py-12 text-center text-gray-500">
                     {searchTerm
@@ -170,7 +210,7 @@ const CategoryList: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                filteredCategories.map((category) => (
+                categories.map((category) => (
                   <tr key={category.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">
@@ -212,6 +252,15 @@ const CategoryList: React.FC = () => {
           </table>
         </div>
       </div>
+
+      {/* Pagination */}
+      {!loading && pagination.total > 0 && (
+        <Pagination
+          pagination={pagination}
+          onPageChange={handlePageChange}
+          loading={loading}
+        />
+      )}
 
       {/* Category Form Modal */}
       <CategoryForm

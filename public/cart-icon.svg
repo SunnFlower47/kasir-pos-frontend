@@ -1,0 +1,26 @@
+
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background circle -->
+  <circle cx="128" cy="128" r="120" fill="#2563eb" stroke="#1d4ed8" stroke-width="4"/>
+  
+  <!-- Shopping cart -->
+  <g transform="translate(64, 64)">
+    <!-- Cart body -->
+    <path d="M20 40 L40 40 L50 80 L30 80 Z" fill="white" stroke="white" stroke-width="2"/>
+    
+    <!-- Cart handle -->
+    <path d="M15 35 L25 35" stroke="white" stroke-width="3" stroke-linecap="round"/>
+    
+    <!-- Cart wheels -->
+    <circle cx="35" cy="90" r="6" fill="white"/>
+    <circle cx="55" cy="90" r="6" fill="white"/>
+    
+    <!-- Cart items (boxes) -->
+    <rect x="25" y="45" width="8" height="8" fill="#2563eb" rx="1"/>
+    <rect x="35" y="50" width="8" height="8" fill="#2563eb" rx="1"/>
+    <rect x="30" y="60" width="8" height="8" fill="#2563eb" rx="1"/>
+    
+    <!-- POS text -->
+    <text x="64" y="55" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="white">POS</text>
+  </g>
+</svg>

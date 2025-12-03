@@ -1,35 +1,36 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Outlet } from '../../types';
 import { apiService } from '../../services/api';
-import OutletForm from './OutletForm';
 import toast from 'react-hot-toast';
 import {
+  BuildingStorefrontIcon,
   PlusIcon,
-  MagnifyingGlassIcon,
   PencilIcon,
   TrashIcon,
-  EyeIcon,
-  BuildingStorefrontIcon
+  MagnifyingGlassIcon,
+  CodeBracketIcon,
+  MapPinIcon,
+  PhoneIcon,
+  EnvelopeIcon,
+  CheckCircleIcon,
+  XCircleIcon
 } from '@heroicons/react/24/outline';
 
 const OutletList: React.FC = () => {
+  const navigate = useNavigate();
   const [outlets, setOutlets] = useState<Outlet[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [showForm, setShowForm] = useState(false);
-  const [editingOutlet, setEditingOutlet] = useState<Outlet | null>(null);
 
   const fetchOutlets = React.useCallback(async () => {
     setLoading(true);
     try {
-      console.log('🔄 Fetching outlets...');
       const response = await apiService.getOutlets();
-      console.log('🏢 Outlets Response:', response);
 
       if (response.success && response.data) {
         const data = response.data.data || response.data;
         setOutlets(Array.isArray(data) ? data : []);
-        console.log('✅ Outlets loaded successfully');
       } else {
         console.warn('⚠️ Outlets API failed');
         setOutlets([]);
@@ -59,14 +60,12 @@ const OutletList: React.FC = () => {
     fetchOutlets();
   }, [fetchOutlets]);
 
-  const handleCreate = () => {
-    setEditingOutlet(null);
-    setShowForm(true);
+  const handleAdd = () => {
+    navigate('/outlets/new');
   };
 
   const handleEdit = (outlet: Outlet) => {
-    setEditingOutlet(outlet);
-    setShowForm(true);
+    navigate(`/outlets/${outlet.id}/edit`);
   };
 
   const handleDelete = async (outlet: Outlet) => {
@@ -75,7 +74,6 @@ const OutletList: React.FC = () => {
     }
 
     try {
-      console.log('🗑️ Deleting outlet:', outlet.id);
       const response = await apiService.deleteOutlet(outlet.id);
 
       if (response.success) {
@@ -91,17 +89,7 @@ const OutletList: React.FC = () => {
     }
   };
 
-  const handleFormSuccess = () => {
-    setShowForm(false);
-    setEditingOutlet(null);
-    fetchOutlets(); // Refresh list
-  };
-
-  const handleViewDetail = (outlet: Outlet) => {
-    // TODO: Open outlet detail modal
-    console.log('View detail for outlet:', outlet);
-    toast.success(`Detail outlet ${outlet.name} akan segera tersedia`);
-  };
+  // Remove old modal handlers since we're using separate pages now
 
   const filteredOutlets = outlets.filter(outlet =>
     outlet.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -128,7 +116,7 @@ const OutletList: React.FC = () => {
           </p>
         </div>
         <button
-          onClick={handleCreate}
+          onClick={handleAdd}
           className="btn btn-primary flex items-center gap-2"
         >
           <PlusIcon className="h-5 w-5" />
@@ -163,7 +151,7 @@ const OutletList: React.FC = () => {
               {!searchTerm && (
                 <div className="mt-6">
                   <button
-                    onClick={handleCreate}
+                    onClick={handleAdd}
                     className="btn btn-primary flex items-center gap-2 mx-auto"
                   >
                     <PlusIcon className="h-5 w-5" />
@@ -222,28 +210,19 @@ const OutletList: React.FC = () => {
                 {/* Actions */}
                 <div className="flex justify-end gap-2 mt-4 pt-4 border-t border-gray-200">
                   <button
-                    onClick={() => handleViewDetail(outlet)}
-                    className="text-gray-600 hover:text-gray-900 p-1"
-                    title="Lihat Detail"
-                  >
-                    <EyeIcon className="h-4 w-4" />
-                  </button>
-                  <button
                     onClick={() => handleEdit(outlet)}
                     className="text-indigo-600 hover:text-indigo-900 p-1"
                     title="Edit"
                   >
                     <PencilIcon className="h-4 w-4" />
                   </button>
-                  {!(outlet as any).is_main && (
-                    <button
-                      onClick={() => handleDelete(outlet)}
-                      className="text-red-600 hover:text-red-900 p-1"
-                      title="Hapus"
-                    >
-                      <TrashIcon className="h-4 w-4" />
-                    </button>
-                  )}
+                  <button
+                    onClick={() => handleDelete(outlet)}
+                    className="text-red-600 hover:text-red-900 p-1"
+                    title="Hapus"
+                  >
+                    <TrashIcon className="h-4 w-4" />
+                  </button>
                 </div>
               </div>
             </div>
@@ -275,35 +254,7 @@ const OutletList: React.FC = () => {
         </div>
       )}
 
-      {/* Outlet Form Modal */}
-      {showForm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6">
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-semibold text-gray-900">
-                  {editingOutlet ? 'Edit Outlet' : 'Tambah Outlet Baru'}
-                </h2>
-                <button
-                  onClick={() => setShowForm(false)}
-                  className="text-gray-400 hover:text-gray-600"
-                >
-                  <span className="sr-only">Close</span>
-                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-
-              <OutletForm
-                outlet={editingOutlet}
-                onSuccess={handleFormSuccess}
-                onCancel={() => setShowForm(false)}
-              />
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Modal removed - using separate pages now */}
     </div>
   );
 };

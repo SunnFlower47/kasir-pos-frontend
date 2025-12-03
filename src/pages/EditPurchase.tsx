@@ -8,6 +8,7 @@ import {
 } from '@heroicons/react/24/outline';
 import apiService from '../services/api';
 import toast from 'react-hot-toast';
+import { useAuth } from '../contexts/AuthContext';
 
 interface Product {
   id: number;
@@ -49,6 +50,7 @@ interface PurchaseFormData {
 const EditPurchase: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
+  const { user } = useAuth();
 
   const [formData, setFormData] = useState<PurchaseFormData>({
     supplier_id: '',
@@ -83,6 +85,15 @@ const EditPurchase: React.FC = () => {
       const response = await apiService.getPurchase(parseInt(purchaseId));
       if (response.success && response.data) {
         const purchase = response.data;
+
+        // Check if user can edit this purchase
+        const isSuperAdmin = user && (user.role === 'Super Admin' || user.role === 'super_admin');
+        if (purchase.status === 'paid' && !isSuperAdmin) {
+          toast.error('Hanya super admin yang bisa mengedit purchase dengan status paid');
+          navigate('/purchases');
+          return;
+        }
+
         setFormData({
           supplier_id: purchase.supplier_id.toString(),
           outlet_id: purchase.outlet_id.toString(),

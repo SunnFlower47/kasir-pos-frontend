@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Transaction } from '../../types';
 import { apiService } from '../../services/api';
+import { printerService, ReceiptData } from '../../services/printerService';
 import toast from 'react-hot-toast';
+import Pagination, { PaginationData } from '../common/Pagination';
 import {
   MagnifyingGlassIcon,
   EyeIcon,
@@ -32,7 +34,7 @@ const TransactionHistory: React.FC = () => {
     // date_to: new Date().toISOString().split('T')[0]    // Today
   });
   const [showFilters, setShowFilters] = useState(false);
-  const [pagination, setPagination] = useState({
+  const [pagination, setPagination] = useState<PaginationData>({
     current_page: 1,
     last_page: 1,
     per_page: 15,
@@ -42,7 +44,6 @@ const TransactionHistory: React.FC = () => {
   const fetchTransactions = React.useCallback(async (page = 1) => {
     setLoading(true);
     try {
-      console.log('🔄 Fetching transactions with filters:', filters);
 
       const params = {
         page,
@@ -51,13 +52,9 @@ const TransactionHistory: React.FC = () => {
       };
 
       const response = await apiService.getTransactions(params);
-      console.log('📊 Transactions Response:', response);
-      console.log('📊 Transactions Response Data:', response.data);
 
       if (response.success && response.data) {
         const data = response.data.data || response.data;
-        console.log('📊 Processed Transactions Data:', data);
-        console.log('📊 Is Array?', Array.isArray(data));
 
         // Map transaction_items to items for each transaction
         const mappedTransactions = Array.isArray(data) ? data.map((transaction: any) => ({
@@ -65,22 +62,20 @@ const TransactionHistory: React.FC = () => {
           items: transaction.transaction_items || transaction.transactionItems || transaction.items || []
         })) : [];
 
-        console.log('📊 Mapped Transactions with items:', mappedTransactions);
         setTransactions(mappedTransactions);
 
         // Update pagination if available
-        if (response.data.current_page) {
+        const responseData: any = response.data;
+        if (responseData && typeof responseData === 'object' && 'current_page' in responseData) {
           setPagination({
-            current_page: response.data.current_page,
-            last_page: response.data.last_page,
-            per_page: response.data.per_page,
-            total: response.data.total
+            current_page: responseData.current_page ?? page,
+            last_page: responseData.last_page ?? Math.ceil((responseData.total || 0) / (responseData.per_page || pagination.per_page)),
+            per_page: responseData.per_page ?? pagination.per_page,
+            total: responseData.total ?? 0
           });
         }
 
-        console.log('✅ Transactions loaded successfully:', data.length, 'items');
       } else {
-        console.warn('⚠️ Transactions API failed:', response);
         setTransactions([]);
         toast.error('Gagal memuat data transaksi');
       }
@@ -119,6 +114,10 @@ const TransactionHistory: React.FC = () => {
     fetchTransactions(1); // Reset to first page when searching
   };
 
+  const handlePageChange = (page: number) => {
+    fetchTransactions(page);
+  };
+
   const handleClearFilters = () => {
     setFilters({
       date_from: new Date().toISOString().split('T')[0],
@@ -127,67 +126,64 @@ const TransactionHistory: React.FC = () => {
   };
 
   const handleViewDetail = (transaction: Transaction) => {
-    console.log('Navigate to detail for transaction:', transaction);
     navigate(`/transactions/${transaction.id}`);
   };
 
   const handlePrintReceipt = async (transaction: Transaction) => {
     try {
-      // Get printer settings from localStorage
-      const printerSettings = localStorage.getItem('printerSettings');
-      const settings = printerSettings ? JSON.parse(printerSettings) : { template: '58mm', scale: 90, autoScale: true };
+      toast.loading('Menyiapkan struk...', { id: 'print-prep' });
 
-      console.log('🖨️ Printing receipt for transaction:', transaction.id, 'Settings:', settings);
+      // Prepare receipt data (company settings will be auto-loaded by printerService with outlet priority)
+      const receiptData: ReceiptData = {
+        transaction_id: transaction.transaction_number,
+        date: new Date(transaction.transaction_date).toLocaleDateString('id-ID'),
+        time: new Date(transaction.transaction_date).toLocaleTimeString('id-ID'),
+        cashier_name: transaction.user?.name || 'Kasir',
+        customer_name: transaction.customer?.name,
+        items: transaction.transaction_items?.map(item => ({
+          name: item.product?.name || 'Unknown Product',
+          quantity: item.quantity,
+          price: item.price,
+          total: item.subtotal
+        })) || [],
+        subtotal: transaction.subtotal || 0,
+        tax: transaction.tax_amount || 0,
+        discount: transaction.discount_amount || 0,
+        total: transaction.total_amount,
+        payment_method: transaction.payment_method || 'cash',
+        paid_amount: transaction.paid_amount || transaction.total_amount,
+        change: transaction.change_amount || 0,
+        // Company settings will be auto-loaded by printerService with outlet priority
+        company_name: '',
+        company_address: '',
+        company_phone: '',
+        receipt_footer: ''
+      };
 
-      const response = await fetch(`${process.env.REACT_APP_API_URL}/public/transactions/${transaction.id}/receipt/${settings.template}`, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/pdf',
-        },
-      });
+      toast.dismiss('print-prep');
+      toast.loading('Mencetak struk...', { id: 'printing' });
 
-      if (!response.ok) {
-        throw new Error('Failed to generate receipt');
-      }
+      // Pass outlet_id from transaction if available
+      const outletId = transaction.outlet_id || transaction.outlet?.id || null;
+      const success = await printerService.printReceipt(receiptData, outletId);
 
-      // Create blob and download
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
+      toast.dismiss('printing');
 
-      // For 58mm POS printer, open in new window for printing
-      const printWindow = window.open(url, '_blank');
-      if (printWindow) {
-        printWindow.onload = () => {
-          // Apply scale if auto scale is enabled
-          if (settings.autoScale) {
-            printWindow.document.body.style.transform = `scale(${settings.scale / 100})`;
-            printWindow.document.body.style.transformOrigin = 'top left';
-          }
-          setTimeout(() => {
-            printWindow.print();
-          }, 500);
-        };
+      if (success) {
+        toast.success('Struk berhasil dicetak!');
       } else {
-        // Fallback: download the PDF
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `receipt-${transaction.transaction_number}.pdf`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        toast.error('Gagal mencetak struk');
       }
-
-      window.URL.revokeObjectURL(url);
-      toast.success('Struk berhasil dicetak');
     } catch (error) {
       console.error('❌ Error printing receipt:', error);
+      toast.dismiss('print-prep');
+      toast.dismiss('printing');
       toast.error('Gagal mencetak struk');
     }
   };
 
   const handleExport = async (format: 'excel' | 'pdf') => {
     try {
-      console.log(`Exporting transactions as ${format}...`);
       // TODO: Implement export functionality
       toast.success(`Export ${format.toUpperCase()} akan segera tersedia`);
     } catch (error) {
@@ -218,7 +214,8 @@ const TransactionHistory: React.FC = () => {
     const statusConfig = {
       completed: { bg: 'bg-green-100', text: 'text-green-800', label: 'Selesai' },
       pending: { bg: 'bg-yellow-100', text: 'text-yellow-800', label: 'Pending' },
-      cancelled: { bg: 'bg-red-100', text: 'text-red-800', label: 'Dibatalkan' }
+      cancelled: { bg: 'bg-red-100', text: 'text-red-800', label: 'Dibatalkan' },
+      refunded: { bg: 'bg-orange-100', text: 'text-orange-800', label: 'Direfund' }
     };
 
     const config = statusConfig[status as keyof typeof statusConfig] || statusConfig.pending;
@@ -325,6 +322,7 @@ const TransactionHistory: React.FC = () => {
                 <option value="completed">Selesai</option>
                 <option value="pending">Pending</option>
                 <option value="cancelled">Dibatalkan</option>
+                <option value="refunded">Direfund</option>
               </select>
             </div>
             <div>
@@ -488,75 +486,12 @@ const TransactionHistory: React.FC = () => {
         </div>
 
         {/* Pagination */}
-        {pagination.last_page > 1 && (
-          <div className="bg-white px-4 py-3 flex items-center justify-between border-t border-gray-200 sm:px-6">
-            <div className="flex-1 flex justify-between sm:hidden">
-              <button
-                onClick={() => fetchTransactions(pagination.current_page - 1)}
-                disabled={pagination.current_page <= 1}
-                className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
-              >
-                Previous
-              </button>
-              <button
-                onClick={() => fetchTransactions(pagination.current_page + 1)}
-                disabled={pagination.current_page >= pagination.last_page}
-                className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
-              >
-                Next
-              </button>
-            </div>
-            <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm text-gray-700">
-                  Showing{' '}
-                  <span className="font-medium">
-                    {((pagination.current_page - 1) * pagination.per_page) + 1}
-                  </span>{' '}
-                  to{' '}
-                  <span className="font-medium">
-                    {Math.min(pagination.current_page * pagination.per_page, pagination.total)}
-                  </span>{' '}
-                  of{' '}
-                  <span className="font-medium">{pagination.total}</span> results
-                </p>
-              </div>
-              <div>
-                <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
-                  <button
-                    onClick={() => fetchTransactions(pagination.current_page - 1)}
-                    disabled={pagination.current_page <= 1}
-                    className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
-                  >
-                    Previous
-                  </button>
-                  {Array.from({ length: Math.min(5, pagination.last_page) }, (_, i) => {
-                    const page = i + 1;
-                    return (
-                      <button
-                        key={page}
-                        onClick={() => fetchTransactions(page)}
-                        className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
-                          page === pagination.current_page
-                            ? 'z-10 bg-primary-50 border-primary-500 text-primary-600'
-                            : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
-                        }`}
-                      >
-                        {page}
-                      </button>
-                    );
-                  })}
-                  <button
-                    onClick={() => fetchTransactions(pagination.current_page + 1)}
-                    disabled={pagination.current_page >= pagination.last_page}
-                    className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
-                  >
-                    Next
-                  </button>
-                </nav>
-              </div>
-            </div>
-          </div>
+        {!loading && pagination.total > 0 && (
+          <Pagination
+            pagination={pagination}
+            onPageChange={handlePageChange}
+            loading={loading}
+          />
         )}
 
       </div>

@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Transaction } from '../../types';
 import { apiService } from '../../services/api';
+import { printerService, ReceiptData } from '../../services/printerService';
 import toast from 'react-hot-toast';
+import { useAuth } from '../../contexts/AuthContext';
 import {
   XMarkIcon,
   DocumentTextIcon,
@@ -9,13 +11,15 @@ import {
   CalendarIcon,
   CreditCardIcon,
   PrinterIcon,
-  CheckCircleIcon
+  CheckCircleIcon,
+  ArrowPathIcon
 } from '@heroicons/react/24/outline';
 
 interface TransactionDetailModalProps {
   transaction: Transaction;
   isOpen: boolean;
   onClose: () => void;
+  onRefundSuccess?: () => void; // Callback after successful refund
 }
 
 interface TransactionDetail {
@@ -63,10 +67,15 @@ interface TransactionDetail {
 const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({
   transaction,
   isOpen,
-  onClose
+  onClose,
+  onRefundSuccess
 }) => {
+  const { hasPermission } = useAuth();
   const [transactionDetail, setTransactionDetail] = useState<TransactionDetail | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showRefundModal, setShowRefundModal] = useState(false);
+  const [refundReason, setRefundReason] = useState('');
+  const [refunding, setRefunding] = useState(false);
 
   useEffect(() => {
     if (isOpen && transaction) {
@@ -77,9 +86,7 @@ const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({
   const fetchTransactionDetail = async () => {
     setLoading(true);
     try {
-      console.log('🔍 Fetching transaction detail for ID:', transaction.id);
       const response = await apiService.getTransaction(transaction.id);
-      console.log('🔍 Raw API response:', response);
 
       if (response.success && response.data) {
         // Map transaction_items to items for frontend compatibility
@@ -88,8 +95,6 @@ const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({
           items: response.data.transaction_items || response.data.transactionItems || response.data.items || []
         };
         setTransactionDetail(mappedData);
-        console.log('Transaction detail loaded:', mappedData);
-        console.log('Items count:', mappedData.items?.length || 0);
       } else {
         toast.error('Gagal memuat detail transaksi');
       }
@@ -103,45 +108,53 @@ const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({
 
   const handlePrintReceipt = async () => {
     try {
-      console.log('🖨️ Printing receipt for transaction:', transaction.id);
+      toast.loading('Menyiapkan struk...', { id: 'print-prep' });
 
-      // Generate PDF receipt
-      const response = await fetch(`${process.env.REACT_APP_API_URL}/transactions/${transaction.id}/receipt/pdf`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          'Accept': 'application/pdf',
-        },
-      });
+      // Prepare receipt data (company settings will be auto-loaded by printerService with outlet priority)
+      const receiptData: ReceiptData = {
+        transaction_id: transaction.transaction_number,
+        date: new Date(transaction.transaction_date).toLocaleDateString('id-ID'),
+        time: new Date(transaction.transaction_date).toLocaleTimeString('id-ID'),
+        cashier_name: transaction.user?.name || 'Kasir',
+        customer_name: transaction.customer?.name,
+        items: transaction.transaction_items?.map(item => ({
+          name: item.product?.name || 'Unknown Product',
+          quantity: item.quantity,
+          price: item.price,
+          total: item.subtotal
+        })) || [],
+        subtotal: transaction.subtotal || 0,
+        tax: transaction.tax_amount || 0,
+        discount: transaction.discount_amount || 0,
+        total: transaction.total_amount,
+        payment_method: transaction.payment_method || 'cash',
+        paid_amount: transaction.paid_amount || transaction.total_amount,
+        change: transaction.change_amount || 0,
+        // Company settings will be auto-loaded by printerService with outlet priority
+        company_name: '',
+        company_address: '',
+        company_phone: '',
+        receipt_footer: ''
+      };
 
-      if (!response.ok) {
-        throw new Error('Failed to generate receipt');
-      }
+      toast.dismiss('print-prep');
+      toast.loading('Mencetak struk...', { id: 'printing' });
 
-      // Create blob and download
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
+      // Pass outlet_id from transaction if available
+      const outletId = transaction.outlet_id || transaction.outlet?.id || null;
+      const success = await printerService.printReceipt(receiptData, outletId);
 
-      // For 58mm POS printer, open in new window for printing
-      const printWindow = window.open(url, '_blank');
-      if (printWindow) {
-        printWindow.onload = () => {
-          printWindow.print();
-        };
+      toast.dismiss('printing');
+
+      if (success) {
+        toast.success('Struk berhasil dicetak!');
       } else {
-        // Fallback: download the PDF
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `receipt-${transaction.transaction_number}.pdf`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        toast.error('Gagal mencetak struk');
       }
-
-      window.URL.revokeObjectURL(url);
-      toast.success('Struk berhasil dicetak');
     } catch (error) {
       console.error('❌ Error printing receipt:', error);
+      toast.dismiss('print-prep');
+      toast.dismiss('printing');
       toast.error('Gagal mencetak struk');
     }
   };
@@ -168,7 +181,8 @@ const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({
     const statusConfig = {
       completed: { bg: 'bg-green-100', text: 'text-green-800', label: 'Selesai' },
       pending: { bg: 'bg-yellow-100', text: 'text-yellow-800', label: 'Pending' },
-      cancelled: { bg: 'bg-red-100', text: 'text-red-800', label: 'Dibatalkan' }
+      cancelled: { bg: 'bg-red-100', text: 'text-red-800', label: 'Dibatalkan' },
+      refunded: { bg: 'bg-orange-100', text: 'text-orange-800', label: 'Direfund' }
     };
 
     const config = statusConfig[status as keyof typeof statusConfig] || statusConfig.pending;
@@ -178,6 +192,41 @@ const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({
         {config.label}
       </span>
     );
+  };
+
+  const handleRefund = async () => {
+    if (!refundReason.trim()) {
+      toast.error('Alasan refund harus diisi');
+      return;
+    }
+
+    setRefunding(true);
+    try {
+      const response = await apiService.refundTransaction(transaction.id, refundReason.trim());
+
+      if (response.success) {
+        toast.success('Transaksi berhasil direfund!');
+        setShowRefundModal(false);
+        setRefundReason('');
+        // Refresh transaction detail
+        await fetchTransactionDetail();
+        // Call callback to refresh parent component
+        if (onRefundSuccess) {
+          onRefundSuccess();
+        }
+        // Close modal after short delay
+        setTimeout(() => {
+          onClose();
+        }, 1000);
+      } else {
+        toast.error(response.message || 'Gagal melakukan refund');
+      }
+    } catch (error: any) {
+      console.error('Error refunding transaction:', error);
+      toast.error(error.response?.data?.message || 'Gagal melakukan refund');
+    } finally {
+      setRefunding(false);
+    }
   };
 
   const getPaymentMethodLabel = (method: string) => {
@@ -213,6 +262,15 @@ const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {transaction.status === 'completed' && hasPermission('transactions.refund') && (
+              <button
+                onClick={() => setShowRefundModal(true)}
+                className="btn btn-warning flex items-center gap-2"
+              >
+                <ArrowPathIcon className="h-4 w-4" />
+                Refund
+              </button>
+            )}
             <button
               onClick={handlePrintReceipt}
               className="btn btn-secondary flex items-center gap-2"
@@ -455,6 +513,66 @@ const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Refund Modal */}
+      {showRefundModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[60]">
+          <div className="bg-white rounded-lg max-w-md w-full">
+            <div className="p-6 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900">Refund Transaksi</h3>
+              <p className="text-sm text-gray-600 mt-1">
+                Nomor: {transaction.transaction_number}
+              </p>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Alasan Refund <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  value={refundReason}
+                  onChange={(e) => setRefundReason(e.target.value)}
+                  placeholder="Masukkan alasan refund transaksi ini..."
+                  rows={4}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  disabled={refunding}
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Catatan: Refund akan mengembalikan stok produk dan mengurangi loyalty points (jika ada).
+                </p>
+              </div>
+
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                <p className="text-sm text-yellow-800">
+                  <strong>Perhatian:</strong> Tindakan ini tidak dapat dibatalkan. Stok produk akan dikembalikan dan loyalty points akan dikurangi.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 p-6 border-t border-gray-200">
+              <button
+                onClick={() => {
+                  setShowRefundModal(false);
+                  setRefundReason('');
+                }}
+                disabled={refunding}
+                className="btn btn-secondary"
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleRefund}
+                disabled={refunding || !refundReason.trim()}
+                className="btn btn-warning"
+                disabled={refunding || !refundReason.trim()}
+              >
+                {refunding ? 'Memproses...' : 'Konfirmasi Refund'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

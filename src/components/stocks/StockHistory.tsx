@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Product, Outlet } from '../../types';
 import { apiService } from '../../services/api';
 import toast from 'react-hot-toast';
@@ -45,11 +45,9 @@ const StockHistory: React.FC = () => {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
-      console.log('🔄 Fetching stock movements from API...');
-
       // Build query parameters
       const params: any = {};
       if (selectedOutlet) params.outlet_id = selectedOutlet;
@@ -64,14 +62,14 @@ const StockHistory: React.FC = () => {
         apiService.get('/outlets')
       ]);
 
-      console.log('📊 Stock Movements API Response:', movementsResponse);
+      if (signal?.aborted) return;
+
 
       // Handle movements
       if (movementsResponse && movementsResponse.success && movementsResponse.data) {
         const movementsData = movementsResponse.data.data || movementsResponse.data;
         const movementsArray = Array.isArray(movementsData) ? movementsData : [];
         setMovements(movementsArray);
-        console.log('✅ Stock movements loaded:', movementsArray.length, 'items');
       } else {
         console.warn('⚠️ Stock movements API failed:', movementsResponse?.message);
         setMovements([]);
@@ -79,43 +77,42 @@ const StockHistory: React.FC = () => {
       }
 
       // Handle outlets
-      console.log('🔍 StockHistory - Raw outlets response:', outletsResponse);
       if (outletsResponse.success && outletsResponse.data) {
         // Handle paginated response
         const outletsData = outletsResponse.data.data || outletsResponse.data;
         const outletsArray = Array.isArray(outletsData) ? outletsData : [];
         setOutlets(outletsArray);
-        console.log('✅ StockHistory - Outlets loaded:', outletsArray.length, 'items');
-        console.log('📍 StockHistory - Outlets data:', outletsArray);
       } else {
         console.warn('⚠️ StockHistory - Outlets API failed:', outletsResponse?.message);
         setOutlets([]);
       }
-
-
-
     } catch (error: any) {
+      if (signal?.aborted) return;
+      
       console.error('❌ Error fetching stock movements:', error);
       const message = error.response?.data?.message || error.message || 'Gagal memuat riwayat stok';
       toast.error(message);
       setMovements([]);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) {
+        setLoading(false);
+      }
     }
-  };
+  }, [selectedOutlet, selectedProduct?.id, selectedType, dateFrom, dateTo]);
 
+  // Fetch data when dependencies change (debounced)
   useEffect(() => {
-    fetchData();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Refetch when filters change
-  useEffect(() => {
+    const abortController = new AbortController();
+    
     const timeoutId = setTimeout(() => {
-      fetchData();
+      fetchData(abortController.signal);
     }, 500); // Debounce
 
-    return () => clearTimeout(timeoutId);
-  }, [selectedOutlet, selectedProduct?.id, selectedType, dateFrom, dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
+    return () => {
+      clearTimeout(timeoutId);
+      abortController.abort();
+    };
+  }, [fetchData]);
 
   const filteredMovements = movements.filter(movement => {
     const matchesSearch = movement.product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||

@@ -6,6 +6,7 @@ import toast from 'react-hot-toast';
 interface OutletFormData {
   id?: number;
   name: string;
+  code: string;
   address?: string;
   phone?: string;
   email?: string;
@@ -22,6 +23,7 @@ interface OutletFormProps {
 const OutletForm: React.FC<OutletFormProps> = ({ outlet, onSuccess, onCancel }) => {
   const [formData, setFormData] = useState<OutletFormData>({
     name: '',
+    code: '',
     address: '',
     phone: '',
     email: '',
@@ -36,6 +38,7 @@ const OutletForm: React.FC<OutletFormProps> = ({ outlet, onSuccess, onCancel }) 
       setFormData({
         id: outlet.id,
         name: outlet.name,
+        code: (outlet as any).code || '',
         address: outlet.address || '',
         phone: outlet.phone || '',
         email: outlet.email || '',
@@ -50,6 +53,12 @@ const OutletForm: React.FC<OutletFormProps> = ({ outlet, onSuccess, onCancel }) 
 
     if (!formData.name.trim()) {
       newErrors.name = 'Nama outlet wajib diisi';
+    }
+
+    if (!formData.code.trim()) {
+      newErrors.code = 'Kode outlet wajib diisi';
+    } else if (!/^[A-Z0-9]{3,10}$/.test(formData.code.trim())) {
+      newErrors.code = 'Kode outlet harus 3-10 karakter (huruf besar dan angka)';
     }
 
     if (formData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
@@ -78,6 +87,7 @@ const OutletForm: React.FC<OutletFormProps> = ({ outlet, onSuccess, onCancel }) 
 
       const submitData = {
         name: formData.name.trim(),
+        code: formData.code.trim().toUpperCase(),
         address: formData.address?.trim() || null,
         phone: formData.phone?.trim() || null,
         email: formData.email?.trim() || null,
@@ -173,6 +183,30 @@ const OutletForm: React.FC<OutletFormProps> = ({ outlet, onSuccess, onCancel }) 
         )}
       </div>
 
+      {/* Outlet Code */}
+      <div>
+        <label htmlFor="code" className="block text-sm font-medium text-gray-700 mb-1">
+          Kode Outlet *
+        </label>
+        <input
+          type="text"
+          id="code"
+          value={formData.code}
+          onChange={(e) => handleInputChange('code', e.target.value.toUpperCase())}
+          className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 ${
+            errors.code ? 'border-red-500' : 'border-gray-300'
+          }`}
+          placeholder="Contoh: OUT001"
+          maxLength={10}
+          required
+        />
+        {errors.code && (
+          <p className="mt-1 text-sm text-red-600">{errors.code}</p>
+        )}
+        <p className="mt-1 text-xs text-gray-500">
+          Kode unik untuk outlet (3-10 karakter, huruf besar dan angka)
+        </p>
+      </div>
 
       {/* Address */}
       <div>

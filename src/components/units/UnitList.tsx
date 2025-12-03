@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Unit } from '../../types';
 import { apiService } from '../../services/api';
 import toast from 'react-hot-toast';
+import { invalidateUnitCache, invalidateProductCache } from '../../utils/cacheInvalidation';
 import UnitForm from './UnitForm';
 import {
   PlusIcon,
@@ -29,7 +30,6 @@ const UnitList: React.FC = () => {
         const unitsData = response.data.data || response.data;
         const unitsArray = Array.isArray(unitsData) ? unitsData : [];
         setUnits(unitsArray);
-        console.log('✅ Units loaded:', unitsArray.length, 'items');
       } else {
         console.warn('⚠️ Units API failed:', response?.message);
         setUnits([]);
@@ -75,6 +75,9 @@ const UnitList: React.FC = () => {
 
       if (response.success) {
         toast.success('Satuan berhasil dihapus');
+        // Invalidate cache and refresh
+        invalidateUnitCache();
+        invalidateProductCache(); // Products depend on units
         fetchUnits();
       } else {
         toast.error(response.message || 'Gagal menghapus satuan');
@@ -90,6 +93,9 @@ const UnitList: React.FC = () => {
   };
 
   const handleFormSuccess = () => {
+    // Invalidate cache before refreshing
+    invalidateUnitCache();
+    invalidateProductCache(); // Products depend on units
     fetchUnits();
   };
 

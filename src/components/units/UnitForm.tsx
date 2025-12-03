@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Unit } from '../../types';
 import { apiService } from '../../services/api';
 import toast from 'react-hot-toast';
+import { invalidateUnitCache, invalidateProductCache } from '../../utils/cacheInvalidation';
 import { XMarkIcon } from '@heroicons/react/24/outline';
 
 interface UnitFormProps {
@@ -66,6 +67,9 @@ const UnitForm: React.FC<UnitFormProps> = ({
 
       if (response.success) {
         toast.success(unit ? 'Satuan berhasil diperbarui' : 'Satuan berhasil ditambahkan');
+        // Invalidate cache before calling onSuccess
+        invalidateUnitCache();
+        invalidateProductCache(); // Products depend on units
         onSuccess();
         onClose();
       } else {

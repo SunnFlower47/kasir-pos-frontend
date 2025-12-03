@@ -1,35 +1,111 @@
-import React from 'react';
+import React, { lazy, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from './contexts/AuthContext';
+import { FullscreenProvider } from './contexts/FullscreenContext';
 import ErrorBoundary from './components/ErrorBoundary';
+import LazyWrapper from './components/LazyWrapper';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import Login from './components/auth/Login';
 import Layout from './components/layout/Layout';
 import Dashboard from './components/dashboard/Dashboard';
-import POSInterface from './components/pos/POSInterface';
-import ProductList from './components/products/ProductList';
-import StockList from './components/stocks/StockList';
-import CustomerList from './components/customers/CustomerList';
-import SupplierList from './components/suppliers/SupplierList';
-import PurchaseList from './components/purchases/PurchaseList';
-import CreatePurchase from './pages/CreatePurchase';
-import EditPurchase from './pages/EditPurchase';
-import OutletList from './components/outlets/OutletList';
-import UserList from './components/users/UserList';
-import RolePermissionPage from './pages/RolePermissionPage';
-import TransactionHistory from './components/transactions/TransactionHistory';
-import TransactionDetailPage from './components/transactions/TransactionDetailPage';
-import ReportDashboard from './components/reports/ReportDashboardMain';
-import SettingsPage from './pages/SettingsPage';
-import Settings from './components/settings/Settings';
-import TestReports from './components/TestReports';
+import GlobalHotkeys from './components/GlobalHotkeys';
+import { startCacheCleanup } from './hooks/useApiCache';
+
+// Lazy load components
+const POSInterface = lazy(() => import('./components/pos/POSInterface'));
+const ProductList = lazy(() => import('./components/products/ProductList'));
+const StockList = lazy(() => import('./components/stocks/StockList'));
+const CustomerList = lazy(() => import('./components/customers/CustomerList'));
+const CategoryList = lazy(() => import('./components/categories/CategoryList'));
+const UnitList = lazy(() => import('./components/units/UnitList'));
+const AddCustomer = lazy(() => import('./pages/customers/AddCustomer'));
+const EditCustomer = lazy(() => import('./pages/customers/EditCustomer'));
+const SupplierList = lazy(() => import('./components/suppliers/SupplierList'));
+const PurchaseList = lazy(() => import('./components/purchases/PurchaseList'));
+const CreatePurchase = lazy(() => import('./pages/CreatePurchase'));
+const EditPurchase = lazy(() => import('./pages/EditPurchase'));
+const PurchaseDetail = lazy(() => import('./pages/PurchaseDetail'));
+const ExpenseList = lazy(() => import('./components/expenses/ExpenseList'));
+const OutletList = lazy(() => import('./components/outlets/OutletList'));
+const AddOutlet = lazy(() => import('./pages/outlets/AddOutlet'));
+const EditOutlet = lazy(() => import('./pages/outlets/EditOutlet'));
+const UserList = lazy(() => import('./components/users/UserList'));
+const RolePermissionPage = lazy(() => import('./pages/RolePermissionPage'));
+const TransactionHistory = lazy(() => import('./components/transactions/TransactionHistory'));
+const TransactionDetailPage = lazy(() => import('./components/transactions/TransactionDetailPage'));
+const EnhancedReportDashboard = lazy(() => import('./components/reports/EnhancedReportDashboard'));
+const FinancialReportDashboard = lazy(() => import('./components/reports/FinancialReportDashboard'));
+const SettingsPage = lazy(() => import('./pages/SettingsPage'));
+const TestReports = lazy(() => import('./components/TestReports'));
+const ProfessionalReports = lazy(() => import('./pages/ProfessionalReports'));
+const AuditLogList = lazy(() => import('./components/audit/AuditLogList'));
+const ExportImport = lazy(() => import('./pages/ExportImport'));
 
 function App() {
+  // Start cache cleanup on app mount
+  useEffect(() => {
+    const cleanup = startCacheCleanup(60 * 1000); // Clean every minute
+    return cleanup;
+  }, []);
+
+  // Suppress ResizeObserver loop errors (harmless browser warning)
+  // This error occurs when ResizeObserver detects size changes that trigger
+  // layout changes, creating a loop. It's safe to ignore in most cases.
+  useEffect(() => {
+    const errorHandler = (event: ErrorEvent) => {
+      if (
+        event.message &&
+        event.message.includes('ResizeObserver loop completed with undelivered notifications')
+      ) {
+        event.stopPropagation();
+        event.preventDefault();
+        return false;
+      }
+      return true;
+    };
+
+    const rejectionHandler = (event: PromiseRejectionEvent) => {
+      const message = event.reason?.message || event.reason?.toString() || '';
+      if (message.includes('ResizeObserver loop')) {
+        event.preventDefault();
+        return;
+      }
+    };
+
+    // Catch error events
+    window.addEventListener('error', errorHandler);
+    
+    // Catch unhandled promise rejections
+    window.addEventListener('unhandledrejection', rejectionHandler);
+
+    // Suppress console errors for ResizeObserver (optional, more aggressive)
+    const originalConsoleError = console.error;
+    console.error = (...args) => {
+      const message = args.map(arg => 
+        typeof arg === 'string' ? arg : JSON.stringify(arg)
+      ).join(' ');
+      
+      if (message.includes('ResizeObserver loop completed with undelivered notifications')) {
+        // Silently ignore - this is a harmless browser warning
+        return;
+      }
+      originalConsoleError.apply(console, args);
+    };
+
+    return () => {
+      window.removeEventListener('error', errorHandler);
+      window.removeEventListener('unhandledrejection', rejectionHandler);
+      console.error = originalConsoleError;
+    };
+  }, []);
+
   return (
     <ErrorBoundary>
       <AuthProvider>
-        <Router>
+        <FullscreenProvider>
+          <Router>
+            <GlobalHotkeys />
           <div className="App">
           <Toaster
             position="top-right"
@@ -77,7 +153,9 @@ function App() {
                 path="pos"
                 element={
                   <ProtectedRoute permission="transactions.create">
-                    <POSInterface />
+                    <LazyWrapper>
+                      <POSInterface />
+                    </LazyWrapper>
                   </ProtectedRoute>
                 }
               />
@@ -87,7 +165,33 @@ function App() {
                 path="products"
                 element={
                   <ProtectedRoute permission="products.view">
-                    <ProductList />
+                    <LazyWrapper>
+                      <ProductList />
+                    </LazyWrapper>
+                  </ProtectedRoute>
+                }
+              />
+
+              {/* Categories Route */}
+              <Route
+                path="categories"
+                element={
+                  <ProtectedRoute permission="categories.view">
+                    <LazyWrapper>
+                      <CategoryList />
+                    </LazyWrapper>
+                  </ProtectedRoute>
+                }
+              />
+
+              {/* Units Route */}
+              <Route
+                path="units"
+                element={
+                  <ProtectedRoute permission="units.view">
+                    <LazyWrapper>
+                      <UnitList />
+                    </LazyWrapper>
                   </ProtectedRoute>
                 }
               />
@@ -97,17 +201,41 @@ function App() {
                 path="stocks"
                 element={
                   <ProtectedRoute permission="stocks.view">
-                    <StockList />
+                    <LazyWrapper>
+                      <StockList />
+                    </LazyWrapper>
                   </ProtectedRoute>
                 }
               />
 
-              {/* Customers Route */}
+              {/* Customers Routes */}
               <Route
                 path="customers"
                 element={
                   <ProtectedRoute permission="customers.view">
-                    <CustomerList />
+                    <LazyWrapper>
+                      <CustomerList />
+                    </LazyWrapper>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="customers/new"
+                element={
+                  <ProtectedRoute permission="customers.create">
+                    <LazyWrapper>
+                      <AddCustomer />
+                    </LazyWrapper>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="customers/:id/edit"
+                element={
+                  <ProtectedRoute permission="customers.edit">
+                    <LazyWrapper>
+                      <EditCustomer />
+                    </LazyWrapper>
                   </ProtectedRoute>
                 }
               />
@@ -117,7 +245,9 @@ function App() {
                 path="suppliers"
                 element={
                   <ProtectedRoute permission="suppliers.view">
-                    <SupplierList />
+                    <LazyWrapper>
+                      <SupplierList />
+                    </LazyWrapper>
                   </ProtectedRoute>
                 }
               />
@@ -127,7 +257,9 @@ function App() {
                 path="purchases"
                 element={
                   <ProtectedRoute permission="purchases.view">
-                    <PurchaseList />
+                    <LazyWrapper>
+                      <PurchaseList />
+                    </LazyWrapper>
                   </ProtectedRoute>
                 }
               />
@@ -135,15 +267,41 @@ function App() {
                 path="purchases/create"
                 element={
                   <ProtectedRoute permission="purchases.create">
-                    <CreatePurchase />
+                    <LazyWrapper>
+                      <CreatePurchase />
+                    </LazyWrapper>
                   </ProtectedRoute>
                 }
               />
               <Route
                 path="purchases/:id/edit"
                 element={
-                  <ProtectedRoute permission="purchases.update">
-                    <EditPurchase />
+                  <ProtectedRoute permission="purchases.edit">
+                    <LazyWrapper>
+                      <EditPurchase />
+                    </LazyWrapper>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="purchases/:id"
+                element={
+                  <ProtectedRoute permission="purchases.view">
+                    <LazyWrapper>
+                      <PurchaseDetail />
+                    </LazyWrapper>
+                  </ProtectedRoute>
+                }
+              />
+
+              {/* Expenses Routes */}
+              <Route
+                path="expenses"
+                element={
+                  <ProtectedRoute permission="expenses.view">
+                    <LazyWrapper>
+                      <ExpenseList />
+                    </LazyWrapper>
                   </ProtectedRoute>
                 }
               />
@@ -153,7 +311,9 @@ function App() {
                 path="transactions"
                 element={
                   <ProtectedRoute permission="transactions.view">
-                    <TransactionHistory />
+                    <LazyWrapper>
+                      <TransactionHistory />
+                    </LazyWrapper>
                   </ProtectedRoute>
                 }
               />
@@ -161,7 +321,9 @@ function App() {
                 path="transactions/:id"
                 element={
                   <ProtectedRoute permission="transactions.view">
-                    <TransactionDetailPage />
+                    <LazyWrapper>
+                      <TransactionDetailPage />
+                    </LazyWrapper>
                   </ProtectedRoute>
                 }
               />
@@ -171,17 +333,77 @@ function App() {
                 path="reports"
                 element={
                   <ProtectedRoute permission="reports.sales">
-                    <ReportDashboard />
+                    <LazyWrapper>
+                      <EnhancedReportDashboard />
+                    </LazyWrapper>
                   </ProtectedRoute>
                 }
               />
 
-              {/* Outlets Route */}
+              <Route
+                path="reports/financial"
+                element={
+                  <ProtectedRoute permission="reports.profit">
+                    <LazyWrapper>
+                      <FinancialReportDashboard />
+                    </LazyWrapper>
+                  </ProtectedRoute>
+                }
+              />
+
+
+              {/* Professional Reports Route */}
+              <Route
+                path="professional-reports"
+                element={
+                  <ProtectedRoute permission="reports.sales">
+                    <LazyWrapper>
+                      <ProfessionalReports />
+                    </LazyWrapper>
+                  </ProtectedRoute>
+                }
+              />
+
+              {/* Export/Import Route */}
+              <Route
+                path="export-import"
+                element={
+                  <ProtectedRoute permission="export.view">
+                    <LazyWrapper>
+                      <ExportImport />
+                    </LazyWrapper>
+                  </ProtectedRoute>
+                }
+              />
+
+              {/* Outlets Routes */}
               <Route
                 path="outlets"
                 element={
                   <ProtectedRoute role="Super Admin">
-                    <OutletList />
+                    <LazyWrapper>
+                      <OutletList />
+                    </LazyWrapper>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="outlets/new"
+                element={
+                  <ProtectedRoute role="Super Admin">
+                    <LazyWrapper>
+                      <AddOutlet />
+                    </LazyWrapper>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="outlets/:id/edit"
+                element={
+                  <ProtectedRoute role="Super Admin">
+                    <LazyWrapper>
+                      <EditOutlet />
+                    </LazyWrapper>
                   </ProtectedRoute>
                 }
               />
@@ -191,7 +413,9 @@ function App() {
                 path="users"
                 element={
                   <ProtectedRoute role={['Super Admin', 'Admin']}>
-                    <UserList />
+                    <LazyWrapper>
+                      <UserList />
+                    </LazyWrapper>
                   </ProtectedRoute>
                 }
               />
@@ -200,8 +424,10 @@ function App() {
               <Route
                 path="role-permissions"
                 element={
-                  <ProtectedRoute role={['Super Admin', 'Admin']}>
-                    <RolePermissionPage />
+                  <ProtectedRoute role="Super Admin">
+                    <LazyWrapper>
+                      <RolePermissionPage />
+                    </LazyWrapper>
                   </ProtectedRoute>
                 }
               />
@@ -211,7 +437,21 @@ function App() {
                 path="settings"
                 element={
                   <ProtectedRoute permission="settings.view">
-                    <Settings />
+                    <LazyWrapper>
+                      <SettingsPage />
+                    </LazyWrapper>
+                  </ProtectedRoute>
+                }
+              />
+
+              {/* Audit Logs Route */}
+              <Route
+                path="audit-logs"
+                element={
+                  <ProtectedRoute permission="audit-logs.view">
+                    <LazyWrapper>
+                      <AuditLogList />
+                    </LazyWrapper>
                   </ProtectedRoute>
                 }
               />
@@ -219,13 +459,11 @@ function App() {
               {/* Test Reports Route */}
               <Route
                 path="test-reports"
-                element={<TestReports />}
-              />
-
-              {/* Settings Route */}
-              <Route
-                path="settings"
-                element={<SettingsPage />}
+                element={
+                  <LazyWrapper>
+                    <TestReports />
+                  </LazyWrapper>
+                }
               />
             </Route>
 
@@ -234,6 +472,7 @@ function App() {
           </Routes>
         </div>
       </Router>
+        </FullscreenProvider>
     </AuthProvider>
   </ErrorBoundary>
   );

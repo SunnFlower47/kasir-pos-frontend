@@ -3,7 +3,6 @@ import { toast as hotToast } from 'react-hot-toast';
 // Enhanced toast utility with consistent styling and behavior
 export const toast = {
   success: (message: string, options?: any) => {
-    console.log('✅ Success Toast:', message);
     return hotToast.success(message, {
       duration: 4000,
       position: 'top-right',
@@ -24,7 +23,6 @@ export const toast = {
   },
 
   error: (message: string, options?: any) => {
-    console.log('❌ Error Toast:', message);
     return hotToast.error(message, {
       duration: 6000,
       position: 'top-right',
@@ -45,7 +43,6 @@ export const toast = {
   },
 
   warning: (message: string, options?: any) => {
-    console.log('⚠️ Warning Toast:', message);
     return hotToast(message, {
       duration: 5000,
       position: 'top-right',
@@ -63,7 +60,6 @@ export const toast = {
   },
 
   info: (message: string, options?: any) => {
-    console.log('ℹ️ Info Toast:', message);
     return hotToast(message, {
       duration: 4000,
       position: 'top-right',
@@ -81,7 +77,6 @@ export const toast = {
   },
 
   loading: (message: string, options?: any) => {
-    console.log('🔄 Loading Toast:', message);
     return hotToast.loading(message, {
       position: 'top-right',
       style: {
@@ -105,7 +100,6 @@ export const toast = {
     },
     options?: any
   ) => {
-    console.log('🔄 Promise Toast:', messages.loading);
     return hotToast.promise(promise, messages, {
       position: 'top-right',
       style: {
@@ -157,8 +151,6 @@ export const toast = {
 export const handleApiError = (error: any, defaultMessage: string = 'Terjadi kesalahan') => {
   const status = error.response?.status;
   const message = error.response?.data?.message || error.message || defaultMessage;
-
-  console.error('🚨 API Error Handler:', { status, message, error });
 
   if (status === 401) {
     toast.error('Sesi telah berakhir, silakan login kembali');

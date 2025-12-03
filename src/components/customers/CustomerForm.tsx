@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { XMarkIcon } from '@heroicons/react/24/outline';
 import apiService from '../../services/api';
 import toast from 'react-hot-toast';
+import { invalidateCustomerCache } from '../../utils/cacheInvalidation';
+import { useLoyaltySettings } from '../../hooks/useLoyaltySettings';
 
 interface Customer {
   id?: number;
@@ -9,7 +11,9 @@ interface Customer {
   email?: string;
   phone?: string;
   address?: string;
-  level: 'regular' | 'member' | 'vip';
+  birth_date?: string;
+  gender?: 'male' | 'female';
+  level: 'level1' | 'level2' | 'level3' | 'level4' | 'bronze' | 'silver' | 'gold' | 'platinum';
   is_active: boolean;
 }
 
@@ -21,6 +25,7 @@ interface CustomerFormProps {
 }
 
 const CustomerForm: React.FC<CustomerFormProps> = ({ isOpen, onClose, onSuccess, customer }) => {
+  const { getLevelOptions } = useLoyaltySettings();
   const [loading, setLoading] = useState(false);
 
   const [formData, setFormData] = useState<Customer>({
@@ -28,7 +33,9 @@ const CustomerForm: React.FC<CustomerFormProps> = ({ isOpen, onClose, onSuccess,
     email: '',
     phone: '',
     address: '',
-    level: 'regular',
+    birth_date: '',
+    gender: undefined,
+    level: 'level1', // Default to level1 for new customers (0 points)
     is_active: true
   });
 
@@ -37,11 +44,23 @@ const CustomerForm: React.FC<CustomerFormProps> = ({ isOpen, onClose, onSuccess,
   useEffect(() => {
     if (isOpen) {
       if (customer) {
+        // Map old level format (bronze, silver, gold, platinum) to new format (level1-4)
+        const levelMap: Record<string, string> = {
+          'bronze': 'level1',
+          'silver': 'level2',
+          'gold': 'level3',
+          'platinum': 'level4',
+        };
+        const mappedLevel = levelMap[customer.level] || customer.level;
+        
         setFormData({
           ...customer,
+          level: mappedLevel as any,
           email: customer.email || '',
           phone: customer.phone || '',
-          address: customer.address || ''
+          address: customer.address || '',
+          birth_date: customer.birth_date || '',
+          gender: customer.gender || undefined
         });
       } else {
         resetForm();
@@ -55,7 +74,9 @@ const CustomerForm: React.FC<CustomerFormProps> = ({ isOpen, onClose, onSuccess,
       email: '',
       phone: '',
       address: '',
-      level: 'regular',
+      birth_date: '',
+      gender: undefined,
+      level: 'level1',
       is_active: true
     });
     setErrors({});
@@ -113,25 +134,44 @@ const CustomerForm: React.FC<CustomerFormProps> = ({ isOpen, onClose, onSuccess,
     setLoading(true);
 
     try {
+      // Ensure level is valid (should be level1-4, or map old format)
+      let validLevel: 'level1' | 'level2' | 'level3' | 'level4' = formData.level as 'level1' | 'level2' | 'level3' | 'level4';
+      const levelMap: Record<string, 'level1' | 'level2' | 'level3' | 'level4'> = {
+        'bronze': 'level1',
+        'silver': 'level2',
+        'gold': 'level3',
+        'platinum': 'level4',
+      };
+      if (validLevel && levelMap[validLevel]) {
+        validLevel = levelMap[validLevel];
+      }
+      // Default to level1 if level is invalid or empty
+      if (!validLevel || !['level1', 'level2', 'level3', 'level4'].includes(validLevel)) {
+        validLevel = 'level1';
+      }
+
       const submitData = {
         ...formData,
+        level: validLevel,
         email: formData.email?.trim() || undefined,
         phone: formData.phone?.trim() || undefined,
-        address: formData.address?.trim() || undefined
+        address: formData.address?.trim() || undefined,
+        birth_date: formData.birth_date?.trim() || undefined,
+        gender: formData.gender || undefined
       };
 
       let response;
       if (customer?.id) {
-        console.log('🔄 Updating customer:', customer.id, submitData);
         response = await apiService.updateCustomer(customer.id, submitData);
       } else {
-        console.log('🔄 Creating customer:', submitData);
         response = await apiService.createCustomer(submitData);
       }
 
       if (response.success) {
         toast.success(customer?.id ? 'Customer updated successfully' : 'Customer created successfully');
-        onSuccess();
+        // Invalidate cache before calling onSuccess
+        invalidateCustomerCache();
+        onSuccess(); // Callback after successful save
         onClose();
       } else {
         toast.error(response.message || 'Failed to save customer');
@@ -164,27 +204,27 @@ const CustomerForm: React.FC<CustomerFormProps> = ({ isOpen, onClose, onSuccess,
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2 md:p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md max-h-[90vh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b">
-          <h2 className="text-xl font-semibold text-gray-900">
+        <div className="flex items-center justify-between p-2.5 md:p-3 border-b flex-shrink-0">
+          <h2 className="text-base md:text-lg font-semibold text-gray-900">
             {customer?.id ? 'Edit Customer' : 'Add New Customer'}
           </h2>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600"
+            className="text-gray-400 hover:text-gray-600 p-1"
             disabled={loading}
           >
-            <XMarkIcon className="w-6 h-6" />
+            <XMarkIcon className="w-4 h-4 md:w-5 md:h-5" />
           </button>
         </div>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        {/* Form - Scrollable */}
+        <form onSubmit={handleSubmit} className="p-2.5 md:p-3 space-y-2.5 md:space-y-3 overflow-y-auto flex-1">
           {/* Customer Name */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-xs font-medium text-gray-700 mb-1">
               Customer Name *
             </label>
             <input
@@ -192,17 +232,17 @@ const CustomerForm: React.FC<CustomerFormProps> = ({ isOpen, onClose, onSuccess,
               name="name"
               value={formData.name}
               onChange={handleInputChange}
-              className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+              className={`w-full px-2 py-1.5 text-sm border rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 ${
                 errors.name ? 'border-red-500' : 'border-gray-300'
               }`}
               placeholder="Enter customer name"
             />
-            {errors.name && <p className="text-red-500 text-xs mt-1">{errors.name}</p>}
+            {errors.name && <p className="text-red-500 text-[10px] mt-0.5">{errors.name}</p>}
           </div>
 
           {/* Email */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-xs font-medium text-gray-700 mb-1">
               Email
             </label>
             <input
@@ -210,17 +250,17 @@ const CustomerForm: React.FC<CustomerFormProps> = ({ isOpen, onClose, onSuccess,
               name="email"
               value={formData.email}
               onChange={handleInputChange}
-              className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+              className={`w-full px-2 py-1.5 text-sm border rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 ${
                 errors.email ? 'border-red-500' : 'border-gray-300'
               }`}
               placeholder="customer@example.com"
             />
-            {errors.email && <p className="text-red-500 text-xs mt-1">{errors.email}</p>}
+            {errors.email && <p className="text-red-500 text-[10px] mt-0.5">{errors.email}</p>}
           </div>
 
           {/* Phone */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-xs font-medium text-gray-700 mb-1">
               Phone Number
             </label>
             <input
@@ -228,42 +268,75 @@ const CustomerForm: React.FC<CustomerFormProps> = ({ isOpen, onClose, onSuccess,
               name="phone"
               value={formData.phone}
               onChange={handleInputChange}
-              className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+              className={`w-full px-2 py-1.5 text-sm border rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 ${
                 errors.phone ? 'border-red-500' : 'border-gray-300'
               }`}
               placeholder="08123456789"
             />
-            {errors.phone && <p className="text-red-500 text-xs mt-1">{errors.phone}</p>}
+            {errors.phone && <p className="text-red-500 text-[10px] mt-0.5">{errors.phone}</p>}
+          </div>
+
+          {/* Birth Date */}
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Birth Date
+            </label>
+            <input
+              type="date"
+              name="birth_date"
+              value={formData.birth_date}
+              onChange={handleInputChange}
+              className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+          </div>
+
+          {/* Gender */}
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Gender
+            </label>
+            <select
+              name="gender"
+              value={formData.gender || ''}
+              onChange={handleInputChange}
+              className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              <option value="">Select Gender</option>
+              <option value="male">Male</option>
+              <option value="female">Female</option>
+            </select>
           </div>
 
           {/* Customer Level */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-xs font-medium text-gray-700 mb-1">
               Customer Level
             </label>
             <select
               name="level"
               value={formData.level}
               onChange={handleInputChange}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
             >
-              <option value="regular">Regular</option>
-              <option value="member">Member</option>
-              <option value="vip">VIP</option>
+              {getLevelOptions().map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </div>
 
           {/* Address */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-xs font-medium text-gray-700 mb-1">
               Address
             </label>
             <textarea
               name="address"
               value={formData.address}
               onChange={handleInputChange}
-              rows={3}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              rows={2}
+              className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
               placeholder="Enter customer address"
             />
           </div>
@@ -275,32 +348,32 @@ const CustomerForm: React.FC<CustomerFormProps> = ({ isOpen, onClose, onSuccess,
               name="is_active"
               checked={formData.is_active}
               onChange={handleInputChange}
-              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+              className="h-3.5 w-3.5 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
             />
-            <label className="ml-2 block text-sm text-gray-700">
+            <label className="ml-2 block text-xs text-gray-700">
               Active Customer
             </label>
           </div>
 
           {/* Form Actions */}
-          <div className="flex justify-end space-x-3 pt-6 border-t">
+          <div className="flex justify-end gap-1.5 md:gap-2 pt-2.5 md:pt-3 border-t flex-shrink-0">
             <button
               type="button"
               onClick={onClose}
               disabled={loading}
-              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
+              className="px-3 py-2 text-xs md:text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={loading}
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 disabled:opacity-50 flex items-center"
+              className="px-3 py-2 text-xs md:text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 disabled:opacity-50 flex items-center"
             >
               {loading && (
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                <div className="animate-spin rounded-full h-3.5 w-3.5 md:h-4 md:w-4 border-b-2 border-white mr-1.5"></div>
               )}
-              {customer?.id ? 'Update Customer' : 'Create Customer'}
+              {customer?.id ? 'Update' : 'Create'}
             </button>
           </div>
         </form>

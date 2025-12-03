@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Customer } from '../../types';
 import { apiService } from '../../services/api';
 import toast from 'react-hot-toast';
-import CustomerForm from './CustomerForm';
 import CustomerDetailModal from './CustomerDetailModal';
+import { invalidateCustomerCache } from '../../utils/cacheInvalidation';
+import { useLoyaltySettings } from '../../hooks/useLoyaltySettings';
+import Pagination, { PaginationData } from '../common/Pagination';
 import {
   PlusIcon,
   MagnifyingGlassIcon,
@@ -15,29 +18,52 @@ import {
 } from '@heroicons/react/24/outline';
 
 const CustomerList: React.FC = () => {
+  const navigate = useNavigate();
+  const { getLevelText, getLevelColor, getLevelStars, getLevelOptions } = useLoyaltySettings();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedLevel, setSelectedLevel] = useState<string>('');
-  const [showForm, setShowForm] = useState(false);
-  const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [pagination, setPagination] = useState<PaginationData>({
+    current_page: 1,
+    last_page: 1,
+    per_page: 15,
+    total: 0
+  });
 
   // No more mock data - 100% API backend
 
-  const fetchCustomers = React.useCallback(async () => {
+  const fetchCustomers = React.useCallback(async (page = 1) => {
     setLoading(true);
     try {
       const response = await apiService.getCustomers({
         search: searchTerm || undefined,
-        level: selectedLevel || undefined
+        level: selectedLevel || undefined,
+        page,
+        per_page: pagination.per_page
       });
 
       if (response.success && response.data) {
-        const customers = response.data.data || response.data;
-        setCustomers(Array.isArray(customers) ? customers : []);
-        console.log('✅ Customers loaded:', customers.length, 'items');
+        const responseData: any = response.data;
+        
+        // Check if it's paginated response (Laravel pagination format)
+        if (responseData && typeof responseData === 'object' && 'data' in responseData && 'total' in responseData) {
+          const customersArray = Array.isArray(responseData.data) ? responseData.data : [];
+          setCustomers(customersArray);
+          
+          // Update pagination state
+          setPagination({
+            current_page: responseData.current_page ?? page,
+            last_page: responseData.last_page ?? Math.ceil((responseData.total || 0) / (responseData.per_page || pagination.per_page)),
+            per_page: responseData.per_page ?? pagination.per_page,
+            total: responseData.total ?? 0
+          });
+        } else {
+          const customers = responseData.data || responseData;
+          setCustomers(Array.isArray(customers) ? customers : []);
+        }
       } else {
         setCustomers([]);
         toast.error('Gagal memuat data pelanggan');
@@ -64,61 +90,31 @@ const CustomerList: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [searchTerm, selectedLevel]);
+  }, [searchTerm, selectedLevel, pagination.per_page]);
 
   // Initial load
   useEffect(() => {
-    fetchCustomers();
-  }, [fetchCustomers]);
+    fetchCustomers(1); // Reset to page 1 on initial load
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTerm, selectedLevel]); // Reset when filters change
 
-  // Refetch when search or filter changes
+  // Refresh data when page becomes visible (user returns from edit/add page)
   useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      fetchCustomers();
-    }, 500); // Debounce search
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        fetchCustomers(pagination.current_page);
+      }
+    };
 
-    return () => clearTimeout(timeoutId);
-  }, [fetchCustomers]);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [fetchCustomers, pagination.current_page]);
 
-  const filteredCustomers = customers.filter(customer => {
-    const matchesSearch = customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         (customer.phone && customer.phone.includes(searchTerm)) ||
-                         (customer.email && customer.email.toLowerCase().includes(searchTerm.toLowerCase()));
-
-    const matchesLevel = selectedLevel === '' || customer.level === selectedLevel;
-
-    return matchesSearch && matchesLevel;
-  });
-
-  const getLevelColor = (level: string) => {
-    switch (level) {
-      case 'platinum': return 'text-purple-600 bg-purple-100';
-      case 'gold': return 'text-yellow-600 bg-yellow-100';
-      case 'silver': return 'text-gray-600 bg-gray-100';
-      case 'bronze': return 'text-orange-600 bg-orange-100';
-      default: return 'text-blue-600 bg-blue-100';
-    }
+  const handlePageChange = (page: number) => {
+    fetchCustomers(page);
   };
 
-  const getLevelText = (level: string) => {
-    switch (level) {
-      case 'platinum': return 'Platinum';
-      case 'gold': return 'Gold';
-      case 'silver': return 'Silver';
-      case 'bronze': return 'Bronze';
-      default: return 'Bronze';
-    }
-  };
-
-  const getLevelStars = (level: string) => {
-    switch (level) {
-      case 'platinum': return 5;
-      case 'gold': return 4;
-      case 'silver': return 3;
-      case 'bronze': return 2;
-      default: return 1;
-    }
-  };
+  // Level functions now come from useLoyaltySettings hook
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('id-ID', {
@@ -142,13 +138,11 @@ const CustomerList: React.FC = () => {
   };
 
   const handleAdd = () => {
-    setEditingCustomer(null);
-    setShowForm(true);
+    navigate('/customers/new');
   };
 
   const handleEdit = (customer: Customer) => {
-    setEditingCustomer(customer);
-    setShowForm(true);
+    navigate(`/customers/${customer.id}/edit`);
   };
 
   const handleDelete = async (customer: Customer) => {
@@ -157,12 +151,13 @@ const CustomerList: React.FC = () => {
     }
 
     try {
-      console.log('🔄 Deleting customer:', customer.id);
       const response = await apiService.deleteCustomer(customer.id);
 
-      if (response.success) {
+        if (response.success) {
         toast.success('Customer deleted successfully');
-        fetchCustomers(); // Refresh list
+        // Invalidate cache and refresh
+        invalidateCustomerCache();
+        fetchCustomers(pagination.current_page); // Refresh list
       } else {
         toast.error(response.message || 'Failed to delete customer');
       }
@@ -173,14 +168,9 @@ const CustomerList: React.FC = () => {
     }
   };
 
-  const handleFormSuccess = () => {
-    fetchCustomers(); // Refresh list after successful create/update
-    setShowForm(false);
-    setEditingCustomer(null);
-  };
+  // Remove handleFormSuccess since we're using separate pages now
 
   const handleViewHistory = (customer: Customer) => {
-    console.log('View history for:', customer);
     setSelectedCustomer(customer);
     setShowDetailModal(true);
   };
@@ -213,52 +203,36 @@ const CustomerList: React.FC = () => {
             </div>
             <div className="ml-3">
               <p className="text-sm font-medium text-gray-500">Total Pelanggan</p>
-              <p className="text-2xl font-semibold text-gray-900">{customers.length}</p>
+              <p className="text-2xl font-semibold text-gray-900">{pagination.total || customers.length}</p>
             </div>
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow p-4">
-          <div className="flex items-center">
-            <div className="flex-shrink-0">
-              <StarIcon className="h-8 w-8 text-purple-600" />
+        {getLevelOptions().reverse().map((option, index) => {
+          // Count customers with this level (support both new and old format)
+          const levelKeys = [option.value, 
+            option.value === 'level4' ? 'platinum' : 
+            option.value === 'level3' ? 'gold' :
+            option.value === 'level2' ? 'silver' : 'bronze'
+          ];
+          const count = customers.filter(c => levelKeys.includes(c.level)).length;
+          
+          const colors = ['text-purple-600', 'text-yellow-600', 'text-gray-600', 'text-orange-600'];
+          
+          return (
+            <div key={option.value} className="bg-white rounded-lg shadow p-4">
+              <div className="flex items-center">
+                <div className="flex-shrink-0">
+                  <StarIcon className={`h-8 w-8 ${colors[index] || 'text-gray-600'}`} />
+                </div>
+                <div className="ml-3">
+                  <p className="text-sm font-medium text-gray-500">{option.label}</p>
+                  <p className="text-2xl font-semibold text-gray-900">{count}</p>
+                </div>
+              </div>
             </div>
-            <div className="ml-3">
-              <p className="text-sm font-medium text-gray-500">VIP</p>
-              <p className="text-2xl font-semibold text-gray-900">
-                {customers.filter(c => c.level === 'vip').length}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-lg shadow p-4">
-          <div className="flex items-center">
-            <div className="flex-shrink-0">
-              <StarIcon className="h-8 w-8 text-yellow-600" />
-            </div>
-            <div className="ml-3">
-              <p className="text-sm font-medium text-gray-500">Member</p>
-              <p className="text-2xl font-semibold text-gray-900">
-                {customers.filter(c => c.level === 'member').length}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-lg shadow p-4">
-          <div className="flex items-center">
-            <div className="flex-shrink-0">
-              <StarIcon className="h-8 w-8 text-gray-600" />
-            </div>
-            <div className="ml-3">
-              <p className="text-sm font-medium text-gray-500">Regular</p>
-              <p className="text-2xl font-semibold text-gray-900">
-                {customers.filter(c => c.level === 'regular').length}
-              </p>
-            </div>
-          </div>
-        </div>
+          );
+        })}
       </div>
 
       {/* Filters */}
@@ -286,10 +260,11 @@ const CustomerList: React.FC = () => {
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
             >
               <option value="">Semua Level</option>
-              <option value="platinum">Platinum</option>
-              <option value="gold">Gold</option>
-              <option value="silver">Silver</option>
-              <option value="bronze">Bronze</option>
+              {getLevelOptions().map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </div>
         </div>
@@ -327,7 +302,17 @@ const CustomerList: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {filteredCustomers.map((customer) => (
+                {customers.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
+                      {searchTerm || selectedLevel
+                        ? 'Tidak ada pelanggan yang sesuai dengan filter'
+                        : 'Belum ada pelanggan'
+                      }
+                    </td>
+                  </tr>
+                ) : (
+                  customers.map((customer) => (
                   <tr key={customer.id}>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center">
@@ -410,33 +395,22 @@ const CustomerList: React.FC = () => {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  ))
+                )}
               </tbody>
             </table>
-
-            {filteredCustomers.length === 0 && (
-              <div className="text-center py-12">
-                <UserIcon className="mx-auto h-12 w-12 text-gray-400" />
-                <h3 className="mt-2 text-sm font-medium text-gray-900">Tidak ada pelanggan</h3>
-                <p className="mt-1 text-sm text-gray-500">
-                  Mulai dengan menambahkan pelanggan pertama Anda.
-                </p>
-              </div>
-            )}
           </div>
         )}
-      </div>
 
-      {/* Customer Form Modal */}
-      <CustomerForm
-        isOpen={showForm}
-        onClose={() => {
-          setShowForm(false);
-          setEditingCustomer(null);
-        }}
-        onSuccess={handleFormSuccess}
-        customer={editingCustomer}
-      />
+        {/* Pagination */}
+        {!loading && pagination.total > 0 && (
+          <Pagination
+            pagination={pagination}
+            onPageChange={handlePageChange}
+            loading={loading}
+          />
+        )}
+      </div>
 
       {/* Customer Detail Modal */}
       {selectedCustomer && (

@@ -70,8 +70,6 @@ const StockOpnameForm: React.FC<StockOpnameFormProps> = ({ onSuccess, onCancel }
   const fetchProductsForOutlet = async (outletId: number) => {
     try {
       setLoading(true);
-      console.log('🔍 StockOpname - Fetching products for outlet:', outletId);
-
       const response = await apiService.getProducts({
         with_stock: true,
         outlet_id: outletId
@@ -81,8 +79,6 @@ const StockOpnameForm: React.FC<StockOpnameFormProps> = ({ onSuccess, onCancel }
         const productData = response.data.data || response.data;
         const productsArray = Array.isArray(productData) ? productData : [];
         setProducts(productsArray);
-        console.log('✅ StockOpname - Products loaded for outlet:', outletId, '- Count:', productsArray.length);
-        console.log('📊 StockOpname - Sample product with stock:', productsArray.slice(0, 2));
       } else {
         console.warn('⚠️ StockOpname - Products API failed:', response?.message);
         setProducts([]);
@@ -108,7 +104,6 @@ const StockOpnameForm: React.FC<StockOpnameFormProps> = ({ onSuccess, onCancel }
 
     // Use stock_quantity from API response (per outlet)
     const systemStock = product.stock_quantity || 0;
-    console.log('📦 StockOpname - Adding product:', product.name, 'Stock for outlet:', selectedOutlet, '=', systemStock);
 
     const newItem: StockOpnameItem = {
       product_id: product.id,
@@ -174,7 +169,6 @@ const StockOpnameForm: React.FC<StockOpnameFormProps> = ({ onSuccess, onCancel }
         }))
       };
 
-      console.log('Submitting stock opname:', opnameData);
       const response = await apiService.processStockOpname(opnameData);
 
       if (response.success) {

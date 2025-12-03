@@ -65,13 +65,11 @@ const StockIncomingForm: React.FC<StockIncomingFormProps> = ({
         // Handle paginated response
         const outletsData = outletsRes.data.data || outletsRes.data;
         setOutlets(Array.isArray(outletsData) ? outletsData : []);
-        console.log('✅ StockIncoming - Outlets loaded:', outletsData);
       }
 
       if (suppliersRes.success && suppliersRes.data) {
         const suppliersData = suppliersRes.data.data || suppliersRes.data;
         setSuppliers(Array.isArray(suppliersData) ? suppliersData : []);
-        console.log('✅ StockIncoming - Suppliers loaded:', suppliersData);
       }
     } catch (error) {
       console.error('Error fetching initial data:', error);

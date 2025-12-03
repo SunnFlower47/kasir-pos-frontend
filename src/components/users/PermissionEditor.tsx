@@ -39,13 +39,11 @@ const PermissionEditor: React.FC<PermissionEditorProps> = ({
       if (rolesResponse.success && rolesResponse.data) {
         const rolesData = Array.isArray(rolesResponse.data) ? rolesResponse.data : [];
         setRoles(rolesData);
-        console.log('✅ Roles loaded:', rolesData.length, 'items');
       }
 
       if (permissionsResponse.success && permissionsResponse.data) {
         const permissionsData = Array.isArray(permissionsResponse.data) ? permissionsResponse.data : [];
         setAllPermissions(permissionsData);
-        console.log('✅ Permissions loaded:', permissionsData.length, 'items');
       }
     } catch (error) {
       console.error('❌ Error fetching data:', error);
@@ -61,12 +59,11 @@ const PermissionEditor: React.FC<PermissionEditorProps> = ({
     }
   }, [isOpen]);
 
-  // TODO: Implement role selection functionality
-  // const handleRoleSelect = (role: Role) => {
-  //   setSelectedRole(role);
-  //   const currentPermissions = role.permissions?.map(p => p.id) || [];
-  //   setRolePermissions(currentPermissions);
-  // };
+  useEffect(() => {
+    if (selectedRole) {
+      setRolePermissions(selectedRole.permissions?.map(p => p.id) || []);
+    }
+  }, [selectedRole]);
 
   const handlePermissionToggle = (permissionId: number) => {
     setRolePermissions(prev => {
@@ -129,7 +126,8 @@ const PermissionEditor: React.FC<PermissionEditorProps> = ({
       'reports': 'Reports',
       'settings': 'Settings',
       'outlets': 'Outlet Management',
-      'promotions': 'Promotion Management'
+      'promotions': 'Promotion Management',
+      'audit-logs': 'Audit Log Management'
     };
 
     const prefix = permissionName.split('.')[0];
@@ -163,7 +161,8 @@ const PermissionEditor: React.FC<PermissionEditorProps> = ({
       'sales': 'Penjualan',
       'purchases': 'Pembelian',
       'stocks': 'Stok',
-      'profit': 'Profit'
+      'profit': 'Profit',
+      'logs': 'Logs'
     };
     return actionLabels[action] || action;
   };
@@ -210,7 +209,10 @@ const PermissionEditor: React.FC<PermissionEditorProps> = ({
               {roles.map((role) => (
                 <button
                   key={role.id}
-                  onClick={() => setSelectedRole(role)}
+                  onClick={() => {
+                    setSelectedRole(role);
+                    setRolePermissions(role.permissions?.map(p => p.id) || []);
+                  }}
                   className={`whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm ${
                     selectedRole?.id === role.id
                       ? 'border-primary-500 text-primary-600'

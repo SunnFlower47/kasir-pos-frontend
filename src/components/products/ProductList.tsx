@@ -1,6 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Product, Category, Unit } from '../../types';
 import { apiService } from '../../services/api';
+import { useApiCache } from '../../hooks/useApiCache';
+import { invalidateProductCache, invalidateStockCache } from '../../utils/cacheInvalidation';
+import useDebounce from '../../hooks/useDebounce';
 import toast from 'react-hot-toast';
 import ProductForm from './ProductForm';
 import CategoryList from '../categories/CategoryList';
@@ -11,83 +14,149 @@ import {
   PencilIcon,
   TrashIcon,
   EyeIcon,
-  ExclamationTriangleIcon
+  ExclamationTriangleIcon,
+  XMarkIcon
 } from '@heroicons/react/24/outline';
 
 const ProductList: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'products' | 'categories' | 'units'>('products');
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [units, setUnits] = useState<Unit[]>([]);
+  // Units are loaded via cache but not stored in state (used by ProductForm directly via UnitList component)
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
   const [showOnlyInactive, setShowOnlyInactive] = useState(false);
+  
+  // Debounce search term
+  const debouncedSearchTerm = useDebounce(searchTerm, 300);
   const [showForm, setShowForm] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [selectedProducts, setSelectedProducts] = useState<number[]>([]);
   // const [showBulkActions, setShowBulkActions] = useState(false); // TODO: Implement bulk actions
   const [categoriesError, setCategoriesError] = useState(false);
   const [categoriesLoading, setCategoriesLoading] = useState(true);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [productStockDistribution, setProductStockDistribution] = useState<any[]>([]);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [outlets, setOutlets] = useState<any[]>([]);
+  const [pagination, setPagination] = useState({
+    current_page: 1,
+    last_page: 1,
+    per_page: 10, 
+    total: 0
+  });
 
-  // No more mock data - 100% API backend
+  // Cache categories and units (static data, persist to localStorage)
+  const { data: cachedCategories, refetch: refetchCategories } = useApiCache<Category[]>(
+    'categories-list',
+    async () => {
+      const response = await apiService.getCategories();
+      if (response.success && response.data) {
+        const categoriesData = response.data.data || response.data;
+        return Array.isArray(categoriesData) ? categoriesData : [];
+      }
+      return [];
+    },
+    { ttl: 30 * 60 * 1000, useLocalStorage: true } // 30 minutes, persist
+  );
 
-  const fetchData = async () => {
+  const { data: cachedUnits, refetch: refetchUnits } = useApiCache<Unit[]>(
+    'units-list',
+    async () => {
+      const response = await apiService.getUnits();
+      if (response.success && response.data) {
+        return Array.isArray(response.data) ? response.data : [];
+      }
+      return [];
+    },
+    { ttl: 30 * 60 * 1000, useLocalStorage: true } // 30 minutes, persist
+  );
+
+  // Load cached data when available (only once when cached data changes)
+  useEffect(() => {
+    if (cachedCategories && cachedCategories.length > 0) {
+      setCategories(cachedCategories);
+      setCategoriesLoading(false);
+      setCategoriesError(false);
+    }
+  }, [cachedCategories]);
+
+  // Fetch categories/units on mount if not cached
+  useEffect(() => {
+    if (!cachedCategories) {
+      refetchCategories();
+    }
+    if (!cachedUnits) {
+      refetchUnits();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run once on mount - refetch functions are stable
+
+  const fetchData = useCallback(async (page: number = 1, signal?: AbortSignal) => {
     setLoading(true);
     setCategoriesLoading(true);
     setCategoriesError(false);
+    
     try {
-      console.log('Fetching products from API...');
-      const [productsResponse, categoriesResponse, unitsResponse] = await Promise.all([
-        apiService.getProducts({
-          search: searchTerm || undefined,
-          category_id: selectedCategory || undefined,
-          is_active: showOnlyInactive ? false : undefined, // Only filter when showing inactive
-          with_stock: true // Include stock information
-        }),
-        apiService.getCategories(),
-        apiService.getUnits()
-      ]);
+      const productsResponse = await apiService.getProducts({
+        search: debouncedSearchTerm || undefined,
+        category_id: selectedCategory || undefined,
+        is_active: showOnlyInactive ? false : undefined, // Only filter when showing inactive
+        with_stock: true, // Include stock information
+        page: page,
+        per_page: pagination.per_page
+      });
 
-      console.log('API Responses:', { productsResponse, categoriesResponse, unitsResponse });
-      console.log('🏷️ Categories Response Detail:', categoriesResponse);
+      if (signal?.aborted) return;
 
-      // Handle products
+      // Handle products with pagination
       if (productsResponse.success && productsResponse.data) {
-        const products = productsResponse.data.data || productsResponse.data;
-        setProducts(Array.isArray(products) ? products : []);
-        console.log('✅ Products loaded:', products.length, 'items');
+        // productsResponse.data is already the Laravel pagination object
+        // It has: current_page, data, last_page, per_page, total, etc.
+        const paginationData: any = productsResponse.data;
+        
+        // Check if it's paginated response (Laravel pagination format)
+        if (paginationData && typeof paginationData === 'object' && 'data' in paginationData && 'total' in paginationData) {
+          // Laravel pagination format: { current_page, data: [...], last_page, per_page, total, ... }
+          const products = Array.isArray(paginationData.data) ? paginationData.data : [];
+          setProducts(products);
+          
+          // Update pagination state from Laravel pagination response
+          const newPagination = {
+            current_page: paginationData.current_page ?? page,
+            last_page: paginationData.last_page ?? Math.ceil((paginationData.total || 0) / (paginationData.per_page || pagination.per_page)),
+            per_page: paginationData.per_page ?? pagination.per_page,
+            total: paginationData.total ?? 0
+          };
+          
+          // Ensure last_page is calculated correctly if missing
+          if (!paginationData.last_page && newPagination.total > 0) {
+            newPagination.last_page = Math.ceil(newPagination.total / newPagination.per_page);
+          }
+          
+          setPagination(newPagination);
+        } else if (Array.isArray(paginationData)) {
+          // Direct array format (fallback) - calculate pagination manually
+          setProducts(paginationData);
+          const calculatedLastPage = Math.ceil(paginationData.length / pagination.per_page);
+          setPagination({
+            current_page: page,
+            last_page: calculatedLastPage,
+            per_page: pagination.per_page,
+            total: paginationData.length
+          });
+        } else {
+          setProducts([]);
+          console.warn('⚠️ Unknown response format:', paginationData);
+        }
       } else {
-        console.warn('⚠️ Products API failed');
         setProducts([]);
         toast.error('Gagal memuat data produk');
       }
-
-      // Handle categories
-      setCategoriesLoading(false);
-      if (categoriesResponse.success && categoriesResponse.data) {
-        const categoriesData = categoriesResponse.data.data || categoriesResponse.data; // Handle pagination
-        const categories = Array.isArray(categoriesData) ? categoriesData : [];
-        setCategories(categories);
-        setCategoriesError(false);
-        console.log('✅ Categories loaded:', categories.length, 'items');
-        console.log('✅ Categories data:', categories);
-      } else {
-        console.warn('⚠️ Categories API failed:', categoriesResponse);
-        setCategories([]);
-        setCategoriesError(true);
-      }
-
-      // Handle units
-      if (unitsResponse.success && unitsResponse.data) {
-        const units = Array.isArray(unitsResponse.data) ? unitsResponse.data : [];
-        setUnits(units);
-        console.log('✅ Units loaded:', units.length, 'items');
-      } else {
-        console.warn('⚠️ Units API failed');
-        setUnits([]);
-      }
     } catch (error: any) {
+      if (signal?.aborted) return;
+      
       console.error('❌ Error fetching data:', error);
 
       const status = error.response?.status;
@@ -107,49 +176,51 @@ const ProductList: React.FC = () => {
 
       // Show empty state on error
       setProducts([]);
-      setCategories([]);
-      setUnits([]);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) {
+        setLoading(false);
+        setCategoriesLoading(false);
+      }
     }
-  };
+  }, [debouncedSearchTerm, selectedCategory, showOnlyInactive, pagination.per_page]); // Removed refetch functions from deps to prevent infinite loop
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setPagination(prev => ({ ...prev, current_page: 1 }));
+  }, [debouncedSearchTerm, selectedCategory, showOnlyInactive]);
 
   useEffect(() => {
-    fetchData();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Refetch when search or filter changes
-  useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      fetchData();
-    }, 500); // Debounce search
-
-    return () => clearTimeout(timeoutId);
-  }, [searchTerm, selectedCategory, showOnlyInactive]); // eslint-disable-line react-hooks/exhaustive-deps
+    const abortController = new AbortController();
+    fetchData(pagination.current_page, abortController.signal);
+    
+    return () => {
+      abortController.abort();
+    };
+  }, [fetchData, pagination.current_page]);
 
   // All categories are shown (no filtering needed for categories)
   const filteredCategories = categories;
 
-  const filteredProducts = products.filter(product => {
-    const matchesSearch = product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         product.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         (product.barcode && product.barcode.includes(searchTerm));
+  // Don't filter on frontend - API already handles filtering
+  // Just use products directly from API response
+  const filteredProducts = useMemo(() => {
+    // Only do minimal client-side filtering if needed (for status)
+    // Search and category are already filtered by API
+    return products.filter(product => {
+      // Status filtering logic (API might not support this filter)
+      const matchesStatus = showOnlyInactive ? !product.is_active : product.is_active;
+      return matchesStatus;
+    });
+  }, [products, showOnlyInactive]);
 
-    const matchesCategory = selectedCategory === null || product.category_id === selectedCategory;
-
-    // Status filtering logic
-    const matchesStatus = showOnlyInactive ? !product.is_active : product.is_active;
-
-    return matchesSearch && matchesCategory && matchesStatus;
-  });
-
-  const getStockStatus = (product: Product) => {
+  const getStockStatus = (product: Product | any, quantity?: number) => {
     // Use real stock data from API
-    const currentStock = product.stock_quantity || 0;
+    const currentStock = quantity !== undefined ? quantity : (product.stock_quantity || 0);
+    const minStock = product.min_stock || 0;
 
     if (currentStock === 0) {
       return { status: 'out', text: 'Habis', color: 'text-red-600 bg-red-100', quantity: currentStock };
-    } else if (currentStock <= product.min_stock) {
+    } else if (currentStock <= minStock) {
       return { status: 'low', text: 'Menipis', color: 'text-yellow-600 bg-yellow-100', quantity: currentStock };
     } else {
       return { status: 'good', text: 'Tersedia', color: 'text-green-600 bg-green-100', quantity: currentStock };
@@ -161,10 +232,44 @@ const ProductList: React.FC = () => {
     setShowForm(true);
   };
 
-  const handleViewDetail = (product: Product) => {
-    // TODO: Open product detail modal
-    console.log('View detail for product:', product);
-    toast.success(`Detail produk ${product.name} akan segera tersedia`);
+  const handleViewDetail = async (product: Product) => {
+    
+    // Set product immediately to show modal
+    setSelectedProduct(product);
+    
+    // Fetch stock distribution and outlets
+    setDetailLoading(true);
+    try {
+      const [stocksResponse, outletsResponse] = await Promise.all([
+        apiService.get('/stocks', { 
+          product_id: product.id,
+          per_page: 1000 
+        }),
+        apiService.get('/outlets')
+      ]);
+      
+      if (stocksResponse.success && stocksResponse.data) {
+        const data = stocksResponse.data.data || stocksResponse.data;
+        const distribution = (Array.isArray(data) ? data : []).filter(
+          (item: any) => item.product_id === product.id
+        );
+        setProductStockDistribution(distribution);
+      } else {
+        setProductStockDistribution([]);
+      }
+      
+      if (outletsResponse && outletsResponse.success && outletsResponse.data) {
+        const outletsData = outletsResponse.data.data || outletsResponse.data;
+        const outletsArray = Array.isArray(outletsData) ? outletsData : [];
+        setOutlets(outletsArray);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching product detail:', error);
+      toast.error('Gagal memuat detail produk');
+      setProductStockDistribution([]);
+    } finally {
+      setDetailLoading(false);
+    }
   };
 
   const handleEdit = (product: Product) => {
@@ -178,11 +283,13 @@ const ProductList: React.FC = () => {
     }
 
     try {
-      console.log('🔄 Deleting product:', product.id);
       const response = await apiService.deleteProduct(product.id);
 
       if (response.success) {
         toast.success('Product deleted successfully');
+        // Invalidate cache and refresh
+        invalidateProductCache();
+        invalidateStockCache(); // Stock is related to products
         fetchData(); // Refresh list
       } else {
         toast.error(response.message || 'Failed to delete product');
@@ -196,7 +303,6 @@ const ProductList: React.FC = () => {
 
   const handleToggleStatus = async (product: Product) => {
     try {
-      console.log('🔄 Toggling product status:', product.id);
       const response = await apiService.updateProduct(product.id, {
         ...product,
         is_active: !product.is_active
@@ -204,6 +310,8 @@ const ProductList: React.FC = () => {
 
       if (response.success) {
         toast.success(`Product ${product.is_active ? 'deactivated' : 'activated'} successfully`);
+        // Invalidate cache and refresh
+        invalidateProductCache();
         fetchData(); // Refresh list
       } else {
         toast.error(response.message || 'Failed to update product status');
@@ -216,6 +324,9 @@ const ProductList: React.FC = () => {
   };
 
   const handleFormSuccess = () => {
+    // Invalidate cache before refreshing
+    invalidateProductCache();
+    invalidateStockCache(); // Stock might be affected by product changes
     fetchData(); // Refresh list after successful create/update
     setShowForm(false);
     setEditingProduct(null);
@@ -241,7 +352,6 @@ const ProductList: React.FC = () => {
     if (selectedProducts.length === 0) return;
 
     try {
-      console.log('🔄 Bulk activating products:', selectedProducts);
       const promises = selectedProducts.map(id => {
         const product = products.find(p => p.id === id);
         if (product) {
@@ -264,7 +374,6 @@ const ProductList: React.FC = () => {
     if (selectedProducts.length === 0) return;
 
     try {
-      console.log('🔄 Bulk deactivating products:', selectedProducts);
       const promises = selectedProducts.map(id => {
         const product = products.find(p => p.id === id);
         if (product) {
@@ -403,7 +512,7 @@ const ProductList: React.FC = () => {
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
             }`}
           >
-            Semua ({products.length})
+            Semua ({pagination.total})
           </button>
           <button
             onClick={() => {
@@ -416,7 +525,7 @@ const ProductList: React.FC = () => {
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
             }`}
           >
-            Aktif ({products.filter(p => p.is_active).length})
+            Aktif ({!showOnlyInactive ? pagination.total : products.filter(p => p.is_active).length})
           </button>
           <button
             onClick={() => {
@@ -430,7 +539,7 @@ const ProductList: React.FC = () => {
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
             }`}
           >
-            Hanya Nonaktif ({products.filter(p => !p.is_active).length})
+            Hanya Nonaktif ({showOnlyInactive ? pagination.total : products.filter(p => !p.is_active).length})
           </button>
           <button
             onClick={() => {
@@ -469,7 +578,6 @@ const ProductList: React.FC = () => {
               value={selectedCategory || ''}
               onChange={(e) => {
                 const newValue = e.target.value ? Number(e.target.value) : null;
-                console.log('🔍 Category filter changed:', newValue);
                 setSelectedCategory(newValue);
                 setShowOnlyInactive(false); // Reset inactive filter when category changes
               }}
@@ -675,9 +783,150 @@ const ProductList: React.FC = () => {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
 
-            {filteredProducts.length === 0 && (
-              <div className="text-center py-12">
+        {/* Pagination */}
+        {!loading && pagination.total > 0 && (
+          <div className="bg-white px-4 py-3 border-t border-gray-200 sm:px-6">
+            {/* Mobile view */}
+            <div className="sm:hidden space-y-3">
+              {/* Keterangan pagination untuk mobile */}
+              <div className="text-center">
+                <p className="text-sm text-gray-700">
+                  Menampilkan{' '}
+                  <span className="font-medium">
+                    {((pagination.current_page - 1) * pagination.per_page) + 1}
+                  </span>{' '}
+                  sampai{' '}
+                  <span className="font-medium">
+                    {Math.min(pagination.current_page * pagination.per_page, pagination.total)}
+                  </span>{' '}
+                  dari{' '}
+                  <span className="font-medium">{pagination.total}</span> hasil
+                </p>
+              </div>
+              {/* Tombol pagination mobile */}
+              <div className="flex justify-between">
+                <button
+                  onClick={() => fetchData(pagination.current_page - 1)}
+                  disabled={pagination.current_page <= 1}
+                  className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Sebelumnya
+                </button>
+                <button
+                  onClick={() => fetchData(pagination.current_page + 1)}
+                  disabled={pagination.current_page >= pagination.last_page}
+                  className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Selanjutnya
+                </button>
+              </div>
+            </div>
+            <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm text-gray-700">
+                  Menampilkan{' '}
+                  <span className="font-medium">
+                    {((pagination.current_page - 1) * pagination.per_page) + 1}
+                  </span>{' '}
+                  sampai{' '}
+                  <span className="font-medium">
+                    {Math.min(pagination.current_page * pagination.per_page, pagination.total)}
+                  </span>{' '}
+                  dari{' '}
+                  <span className="font-medium">{pagination.total}</span> hasil
+                </p>
+              </div>
+              <div>
+                <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+                  <button
+                    onClick={() => fetchData(pagination.current_page - 1)}
+                    disabled={pagination.current_page <= 1}
+                    className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Sebelumnya
+                  </button>
+                  
+                  {/* Always show page 1 */}
+                  {pagination.current_page > 3 && pagination.last_page > 5 && (
+                    <>
+                      <button
+                        onClick={() => fetchData(1)}
+                        className="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50"
+                      >
+                        1
+                      </button>
+                      {pagination.current_page > 4 && (
+                        <span className="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700">
+                          ...
+                        </span>
+                      )}
+                    </>
+                  )}
+                  
+                  {/* Show pages around current page */}
+                  {Array.from({ length: pagination.last_page }, (_, i) => {
+                    const pageNum = i + 1;
+                    // Show pages: current-2, current-1, current, current+1, current+2
+                    // But only if they're within valid range and not already shown
+                    if (
+                      pageNum >= Math.max(1, pagination.current_page - 2) &&
+                      pageNum <= Math.min(pagination.last_page, pagination.current_page + 2) &&
+                      !(pagination.current_page > 3 && pagination.last_page > 5 && pageNum === 1)
+                    ) {
+                      return (
+                        <button
+                          key={pageNum}
+                          onClick={() => fetchData(pageNum)}
+                          className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
+                            pageNum === pagination.current_page
+                              ? 'z-10 bg-blue-50 border-blue-500 text-blue-600'
+                              : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
+                          }`}
+                        >
+                          {pageNum}
+                        </button>
+                      );
+                    }
+                    return null;
+                  })}
+                  
+                  {/* Show ellipsis and last page if needed */}
+                  {pagination.current_page < pagination.last_page - 2 && pagination.last_page > 5 && (
+                    <>
+                      {pagination.current_page < pagination.last_page - 3 && (
+                        <span className="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700">
+                          ...
+                        </span>
+                      )}
+                      <button
+                        onClick={() => fetchData(pagination.last_page)}
+                        className="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50"
+                      >
+                        {pagination.last_page}
+                      </button>
+                    </>
+                  )}
+                  
+                  {/* If last_page <= 5, show all pages (already handled above) */}
+                  
+                  <button
+                    onClick={() => fetchData(pagination.current_page + 1)}
+                    disabled={pagination.current_page >= pagination.last_page}
+                    className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Selanjutnya
+                  </button>
+                </nav>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {!loading && filteredProducts.length === 0 && (
+          <div className="text-center py-12 bg-white">
                 <div className="mx-auto h-12 w-12 text-gray-400">
                   <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
@@ -687,8 +936,6 @@ const ProductList: React.FC = () => {
                 <p className="mt-1 text-sm text-gray-500">
                   Mulai dengan menambahkan produk pertama Anda.
                 </p>
-              </div>
-            )}
           </div>
         )}
       </div>
@@ -710,6 +957,122 @@ const ProductList: React.FC = () => {
           onSuccess={handleFormSuccess}
           product={editingProduct}
         />
+      )}
+
+      {/* Product Detail Modal */}
+      {selectedProduct && (
+        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-3xl w-full shadow-xl">
+            <div className="p-6 border-b flex justify-between items-start">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">{selectedProduct.name}</h3>
+                <p className="text-sm text-gray-500">
+                  SKU: {selectedProduct.sku} • Barcode: {selectedProduct.barcode || '-'}
+                </p>
+              </div>
+              <button
+                onClick={() => setSelectedProduct(null)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <XMarkIcon className="h-6 w-6" />
+              </button>
+            </div>
+            <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
+              {detailLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600" />
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-sm text-gray-500">Kategori</p>
+                      <p className="text-gray-900 font-medium">{selectedProduct.category?.name || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-500">Satuan</p>
+                      <p className="text-gray-900 font-medium">{selectedProduct.unit?.name || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-500">Harga Jual</p>
+                      <p className="text-gray-900 font-medium">
+                        Rp {selectedProduct.selling_price?.toLocaleString('id-ID') || '0'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-500">Harga Modal</p>
+                      <p className="text-gray-900 font-medium">
+                        Rp {selectedProduct.purchase_price?.toLocaleString('id-ID') || '0'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-500">Stok Minimum</p>
+                      <p className="text-gray-900 font-medium">{selectedProduct.min_stock || 0}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-500">Status</p>
+                      <span className={`inline-flex px-2 py-1 text-xs rounded-full ${
+                        selectedProduct.is_active
+                          ? 'text-green-800 bg-green-100'
+                          : 'text-red-800 bg-red-100'
+                      }`}>
+                        {selectedProduct.is_active ? 'Aktif' : 'Non-aktif'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="text-md font-semibold mb-3">Distribusi Stok per Outlet</h4>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Outlet</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Stok</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {productStockDistribution.length === 0 ? (
+                            <tr>
+                              <td colSpan={3} className="px-4 py-6 text-center text-sm text-gray-500">
+                                Distribusi stok tidak tersedia
+                              </td>
+                            </tr>
+                          ) : (
+                            productStockDistribution.map((stockItem: any) => {
+                              const status = getStockStatus(selectedProduct, stockItem.quantity);
+                              const outlet = outlets.find(o => o.id === stockItem.outlet_id);
+                              return (
+                                <tr key={`${stockItem.product_id}-${stockItem.outlet_id}`}>
+                                  <td className="px-4 py-3 text-sm text-gray-900">{outlet?.name || '-'}</td>
+                                  <td className="px-4 py-3 text-sm font-medium text-gray-900">{stockItem.quantity}</td>
+                                  <td className="px-4 py-3">
+                                    <span className={`px-2 py-1 text-xs font-semibold rounded-full ${status.color}`}>
+                                      {status.text}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="p-4 border-t text-right">
+              <button
+                onClick={() => setSelectedProduct(null)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900"
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

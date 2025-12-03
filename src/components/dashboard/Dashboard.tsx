@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { DashboardData } from '../../types';
 import apiService from '../../services/api';
 import toast from 'react-hot-toast';
@@ -27,25 +27,24 @@ const Dashboard: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  const fetchDashboardData = async (outletId?: number | null) => {
+  const fetchDashboardData = useCallback(async (outletId?: number | null, signal?: AbortSignal) => {
     setLoading(true);
+    
     try {
-      console.log('🔄 Fetching dashboard data from API...', outletId ? `for outlet ${outletId}` : 'global view');
       const params = outletId ? { outlet_id: outletId } : {};
       const response = await apiService.getDashboard(params);
-      console.log('📊 Dashboard Response:', response);
+      
+      if (signal?.aborted) return;
 
       if (response.success && response.data) {
         setData(response.data);
-        console.log('✅ Dashboard data loaded successfully');
-        console.log('📊 Dashboard Stats:', response.data.stats);
-        console.log('🏢 Total Outlets:', response.data.stats?.total_outlets);
       } else {
-        console.warn('⚠️ Dashboard API failed');
         setData(null);
         toast.error('Gagal memuat data dashboard');
       }
     } catch (error: any) {
+      if (signal?.aborted) return;
+      
       console.error('❌ Dashboard API Error:', error);
 
       const status = error.response?.status;
@@ -65,21 +64,28 @@ const Dashboard: React.FC = () => {
 
       setData(null);
     } finally {
+      if (!signal?.aborted) {
       setLoading(false);
+      }
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchDashboardData(selectedOutletId);
-  }, [selectedOutletId]);
+    const abortController = new AbortController();
+    fetchDashboardData(selectedOutletId, abortController.signal);
+    
+    return () => {
+      abortController.abort();
+    };
+  }, [selectedOutletId, fetchDashboardData]);
 
-  const handleOutletChange = (outletId: number | null) => {
+  const handleOutletChange = useCallback((outletId: number | null) => {
     setSelectedOutletId(outletId);
-  };
+  }, []);
 
-  const handleRefresh = () => {
+  const handleRefresh = useCallback(() => {
     fetchDashboardData(selectedOutletId);
-  }; // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fetchDashboardData, selectedOutletId]);
 
   if (loading) {
     return (
@@ -175,8 +181,8 @@ const Dashboard: React.FC = () => {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 lg:gap-6 mb-4 md:mb-6">
         <DashboardCard
           title="Pendapatan Hari Ini"
-          value={`Rp ${(data.transaction_stats?.revenue_today || 0).toLocaleString('id-ID')}`}
-          subtitle={`${data.transaction_stats?.transactions_today || 0} transaksi`}
+          value={`Rp ${(Number(data?.transaction_stats?.revenue_today || data?.transaction_stats?.net_revenue_today || 0)).toLocaleString('id-ID')}`}
+          subtitle={`${Number(data?.transaction_stats?.transactions_today || 0)} transaksi`}
           icon={CurrencyDollarIcon}
           color="blue"
           onClick={() => navigate('/transactions?filter=today')}
@@ -185,13 +191,13 @@ const Dashboard: React.FC = () => {
 
         <DashboardCard
           title="Pendapatan Bulan Ini"
-          value={`Rp ${(data.transaction_stats?.revenue_this_month || 0).toLocaleString('id-ID')}`}
+          value={`Rp ${(Number(data?.transaction_stats?.revenue_this_month || data?.transaction_stats?.net_revenue_this_month || 0)).toLocaleString('id-ID')}`}
           subtitle="bulan ini"
           icon={ChartBarIcon}
           color="green"
           trend={{
-            value: data.revenue_growth || 0,
-            isPositive: (data.revenue_growth || 0) >= 0
+            value: Number(data?.revenue_growth || 0),
+            isPositive: Number(data?.revenue_growth || 0) >= 0
           }}
           onClick={() => navigate('/reports?type=sales&period=this_month')}
           loading={loading}

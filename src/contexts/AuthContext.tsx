@@ -27,6 +27,30 @@ interface AuthProviderProps {
   children: ReactNode;
 }
 
+const normalizeUserData = (rawUser: any): User | null => {
+  if (!rawUser || typeof rawUser !== 'object') {
+    return null;
+  }
+
+  const normalizedRoles = Array.isArray(rawUser.roles)
+    ? rawUser.roles.map((role: any) => ({
+        ...role,
+        permissions: Array.isArray(role?.permissions) ? role.permissions : [],
+      }))
+    : [];
+
+  const primaryRole =
+    typeof rawUser.role === 'string'
+      ? rawUser.role
+      : normalizedRoles[0]?.name || '';
+
+  return {
+    ...rawUser,
+    role: primaryRole,
+    roles: normalizedRoles,
+  } as User;
+};
+
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -34,65 +58,36 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   useEffect(() => {
     const initAuth = async () => {
       const token = localStorage.getItem('auth_token');
-      const userData = localStorage.getItem('user');
+      const storedUser = localStorage.getItem('user');
 
-      if (token && userData) {
+      if (token && storedUser) {
         try {
-          console.log('🔄 Checking stored auth...');
-          const parsedUser = JSON.parse(userData);
-
-          // Validate and fix user data structure
-          const validateUserData = (user: any) => {
-            if (!user || typeof user !== 'object') {
-              return null;
-            }
-
-            // Ensure roles is always an array
-            if (!user.roles || !Array.isArray(user.roles)) {
-              user.roles = [];
-            }
-
-            // Ensure each role has permissions array
-            user.roles = user.roles.map((role: any) => {
-              if (!role || typeof role !== 'object') {
-                return { name: 'Unknown', permissions: [] };
-              }
-              if (!role.permissions || !Array.isArray(role.permissions)) {
-                role.permissions = [];
-              }
-              return role;
-            });
-
-            return user;
-          };
-
-          // Verify token with API
-          const response = await apiService.getProfile();
-          if (response.success && response.data) {
-            console.log('✅ Auth verified with API');
-            const validatedUser = validateUserData(response.data.user);
-            if (validatedUser) {
-              setUser(validatedUser);
-            } else {
-              throw new Error('Invalid user data from API');
-            }
-          } else {
-            console.log('⚠️ Token invalid, using stored user data');
-            const validatedUser = validateUserData(parsedUser);
-            if (validatedUser) {
-              setUser(validatedUser);
-            } else {
-              throw new Error('Invalid stored user data');
-            }
+          const parsedUser = normalizeUserData(JSON.parse(storedUser));
+          if (!parsedUser) {
+            throw new Error('Invalid stored user data');
           }
+
+          const response = await apiService.getProfile();
+          const apiUser = response.success ? normalizeUserData(response.data?.user) : null;
+
+          if (apiUser) {
+            setUser(apiUser);
+            localStorage.setItem('user', JSON.stringify(apiUser));
+            setLoading(false);
+            return;
+          }
+
+          setUser(parsedUser);
+          setLoading(false);
+          return;
         } catch (error) {
-          console.error('❌ Auth verification failed:', error);
-          // Clear invalid auth
+          console.error('Auth verification failed:', error);
           localStorage.removeItem('auth_token');
           localStorage.removeItem('user');
           setUser(null);
         }
       }
+
       setLoading(false);
     };
 
@@ -102,73 +97,27 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const login = async (email: string, password: string): Promise<boolean> => {
     setLoading(true);
     try {
-      console.log('🔄 Attempting login with API...');
-      console.log('📍 API URL:', process.env.REACT_APP_API_URL);
       const response = await apiService.login(email, password);
-      console.log('📥 Login response:', response);
-
       if (response.success && response.data) {
         const { token, user: userData } = response.data;
-        console.log('✅ Login successful!');
-        console.log('🔑 Token:', token.substring(0, 30) + '...');
-        console.log('👤 User data:', userData);
-        console.log('🎭 User roles:', userData.roles?.map((r: any) => r.name));
-        console.log('🔐 User permissions:', userData.roles?.flatMap((r: any) => r.permissions?.map((p: any) => p.name) || []));
+        const normalizedUser = normalizeUserData(userData);
 
-        // Validate and fix user data structure
-        const validateUserData = (user: any) => {
-          if (!user || typeof user !== 'object') {
-            throw new Error('Invalid user data');
-          }
-
-          // Ensure roles is always an array
-          if (!user.roles || !Array.isArray(user.roles)) {
-            user.roles = [];
-          }
-
-          // Ensure each role has permissions array
-          user.roles = user.roles.map((role: any) => {
-            if (!role || typeof role !== 'object') {
-              return { name: 'Unknown', permissions: [] };
+        if (!token || !normalizedUser) {
+          throw new Error('Invalid login response');
             }
-            if (!role.permissions || !Array.isArray(role.permissions)) {
-              role.permissions = [];
-            }
-            return role;
-          });
 
-          return user;
-        };
-
-        const validatedUser = validateUserData(userData);
         localStorage.setItem('auth_token', token);
-        localStorage.setItem('user', JSON.stringify(validatedUser));
-        setUser(validatedUser);
-
-        // Test API call immediately after login
-        console.log('🧪 Testing API call after login...');
-        setTimeout(async () => {
-          try {
-            const testResponse = await apiService.getProducts({});
-            console.log('🧪 Test API call result:', testResponse.success ? '✅ SUCCESS' : '❌ FAILED');
-            if (!testResponse.success) {
-              console.log('🧪 Test API error details:', testResponse.message);
-            }
-          } catch (error: any) {
-            console.error('🧪 Test API call error:', error);
-          }
-        }, 1000);
+        localStorage.setItem('user', JSON.stringify(normalizedUser));
+        setUser(normalizedUser);
 
         toast.success('Login berhasil!');
         return true;
-      } else {
-        console.error('❌ Login failed:', response.message);
-        const errorMessage = response.message || 'Login gagal';
-        toast.error(errorMessage);
-        return false;
       }
+
+      toast.error(response.message || 'Login gagal');
+      return false;
     } catch (error: any) {
-      console.error('🚨 Login API Error:', error);
+      console.error('Login API Error:', error);
       let errorMessage = 'Terjadi kesalahan saat login';
 
       if (error.response?.status === 401) {
@@ -252,15 +201,23 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         return false;
       }
 
-      if (!user.roles || !Array.isArray(user.roles) || user.roles.length === 0) {
-        return false;
+      // Check user.role string first (primary method for Spatie Permission)
+      if (user.role && typeof user.role === 'string') {
+        // Handle both exact match and case variations
+        const userRole = user.role.toLowerCase().replace(/\s+/g, '_');
+        const targetRole = roleName.toLowerCase().replace(/\s+/g, '_');
+        if (userRole === targetRole) {
+          return true;
+        }
       }
 
-      // Use traditional for loop to avoid potential 'some' issues
-      for (let i = 0; i < user.roles.length; i++) {
-        const role = user.roles[i];
-        if (role && typeof role === 'object' && role.name === roleName) {
-          return true;
+      // Fallback: Check user.roles array for backward compatibility
+      if (user.roles && Array.isArray(user.roles) && user.roles.length > 0) {
+        for (let i = 0; i < user.roles.length; i++) {
+          const role = user.roles[i];
+          if (role && typeof role === 'object' && role.name === roleName) {
+            return true;
+          }
         }
       }
 

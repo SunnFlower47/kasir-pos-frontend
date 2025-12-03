@@ -30,7 +30,6 @@ const RolePermissionModal: React.FC<RolePermissionModalProps> = ({
       if (response.success && response.data) {
         const rolesData = Array.isArray(response.data) ? response.data : [];
         setRoles(rolesData);
-        console.log('✅ Roles loaded:', rolesData.length, 'items');
       } else {
         console.warn('⚠️ Roles API failed:', response?.message);
         setRoles([]);

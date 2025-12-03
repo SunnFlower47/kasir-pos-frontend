@@ -83,9 +83,11 @@ export interface Customer {
   address?: string;
   birth_date?: string;
   gender?: 'male' | 'female';
-  level: 'regular' | 'member' | 'vip';
+  level: 'level1' | 'level2' | 'level3' | 'level4' | 'bronze' | 'silver' | 'gold' | 'platinum'; // Support both new and old format for backward compatibility
   loyalty_points?: number;
   is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
 }
 
 // Supplier types
@@ -105,6 +107,7 @@ export interface Supplier {
 export interface Outlet {
   id: number;
   name: string;
+  code: string;
   address?: string;
   phone?: string;
   email?: string;
@@ -190,6 +193,7 @@ export interface TransactionItem {
   product?: Product;
   quantity: number;
   unit_price: number;
+  purchase_price?: number; // Snapshot of purchase price at transaction time
   total_price: number;
 }
 
@@ -225,9 +229,15 @@ export interface DashboardStats {
 export interface TransactionStats {
   transactions_today: number;
   revenue_today: number;
+  refunds_today?: number;
+  net_revenue_today?: number;
   transactions_this_month: number;
   revenue_this_month: number;
+  refunds_this_month?: number;
+  net_revenue_this_month?: number;
   revenue_last_month: number;
+  refunds_last_month?: number;
+  net_revenue_last_month?: number;
 }
 
 export interface StockStats {
@@ -303,3 +313,6 @@ export interface Cart {
   tax_amount: number;
   total_amount: number;
 }
+
+// Export electron types
+export * from './electron';

@@ -3,6 +3,7 @@ import { Customer } from '../../types';
 import { apiService } from '../../services/api';
 import toast from 'react-hot-toast';
 import { UserIcon, MagnifyingGlassIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import CustomerForm from '../customers/CustomerForm';
 
 interface CustomerSelectProps {
   selectedCustomer: Customer | null;
@@ -17,6 +18,7 @@ const CustomerSelect: React.FC<CustomerSelectProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(false);
+  const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
 
   // No more mock data - 100% API backend
 
@@ -28,7 +30,6 @@ const CustomerSelect: React.FC<CustomerSelectProps> = ({
       if (response.success && response.data) {
         const customers = response.data.data || response.data;
         setCustomers(Array.isArray(customers) ? customers : []);
-        console.log('✅ POS Customers loaded:', customers.length, 'items');
       } else {
         setCustomers([]);
         toast.error('Gagal memuat data pelanggan');
@@ -142,7 +143,7 @@ const CustomerSelect: React.FC<CustomerSelectProps> = ({
 
       {/* Dropdown */}
       {isOpen && (
-        <div className="absolute z-10 mt-1 w-full bg-white border border-gray-300 rounded-md shadow-lg">
+        <div className="absolute z-50 mt-1 w-full bg-white border border-gray-300 rounded-md shadow-lg">
           {/* Search Input */}
           <div className="p-3 border-b">
             <div className="relative">
@@ -218,12 +219,12 @@ const CustomerSelect: React.FC<CustomerSelectProps> = ({
           {/* Add New Customer Button */}
           <div className="p-3 border-t">
             <button
-              onClick={() => {
-                // TODO: Open add customer modal
-                console.log('Add new customer');
+              onClick={(e) => {
+                e.stopPropagation();
                 setIsOpen(false);
+                setShowAddCustomerModal(true);
               }}
-              className="w-full py-2 px-3 text-sm text-primary-600 border border-primary-600 rounded-md hover:bg-primary-50"
+              className="w-full py-2 px-3 text-sm text-primary-600 border border-primary-600 rounded-md hover:bg-primary-50 transition-colors"
             >
               + Tambah Pelanggan Baru
             </button>
@@ -234,10 +235,23 @@ const CustomerSelect: React.FC<CustomerSelectProps> = ({
       {/* Overlay */}
       {isOpen && (
         <div
-          className="fixed inset-0 z-0"
+          className="fixed inset-0 z-40"
           onClick={() => setIsOpen(false)}
         />
       )}
+
+      {/* Add Customer Modal */}
+      <CustomerForm
+        isOpen={showAddCustomerModal}
+        onClose={() => setShowAddCustomerModal(false)}
+        onSuccess={async () => {
+          // Refresh customer list first
+          await fetchCustomers();
+          // Close modal
+          setShowAddCustomerModal(false);
+          // Note: CustomerForm already shows success toast, so we don't need to show it again
+        }}
+      />
     </div>
   );
 };

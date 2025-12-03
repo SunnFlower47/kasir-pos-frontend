@@ -14,6 +14,7 @@ import {
 import apiService from '../../services/api';
 import toast from 'react-hot-toast';
 import { useAuth } from '../../contexts/AuthContext';
+import Pagination, { PaginationData } from '../common/Pagination';
 // import PurchaseFormNew from './PurchaseFormNew'; // Not used anymore
 
 interface Purchase {
@@ -73,27 +74,51 @@ const PurchaseList: React.FC = () => {
   const [supplierFilter, setSupplierFilter] = useState('');
   const [outletFilter, setOutletFilter] = useState('');
   const [showFilters, setShowFilters] = useState(false);
+  const [pagination, setPagination] = useState<PaginationData>({
+    current_page: 1,
+    last_page: 1,
+    per_page: 15,
+    total: 0
+  });
   // const [showCreateForm, setShowCreateForm] = useState(false); // Not used anymore
   // const [showEditForm, setShowEditForm] = useState(false); // Not used anymore
   // const [selectedPurchase, setSelectedPurchase] = useState<Purchase | null>(null); // Not used anymore
 
-  const fetchPurchases = useCallback(async () => {
+  const fetchPurchases = useCallback(async (page = 1) => {
     try {
       setLoading(true);
-      const params = new URLSearchParams();
+      const params: any = {
+        page,
+        per_page: pagination.per_page
+      };
 
-      if (searchTerm) params.append('search', searchTerm);
-      if (statusFilter) params.append('status', statusFilter);
-      if (supplierFilter) params.append('supplier_id', supplierFilter);
-      if (outletFilter) params.append('outlet_id', outletFilter);
+      if (searchTerm) params.search = searchTerm;
+      if (statusFilter) params.status = statusFilter;
+      if (supplierFilter) params.supplier_id = supplierFilter;
+      if (outletFilter) params.outlet_id = outletFilter;
 
-      const response = await apiService.getPurchases(Object.fromEntries(params));
+      const response = await apiService.getPurchases(params);
       if (response.success && response.data) {
-        const purchasesData = response.data.data || response.data;
-        const purchasesArray = Array.isArray(purchasesData) ? purchasesData : [];
-        setPurchases(purchasesArray);
-        console.log('✅ Purchases loaded:', purchasesArray.length, 'items');
-        console.log('🔍 Purchases data:', purchasesArray);
+        const responseData: any = response.data;
+        
+        // Check if it's paginated response (Laravel pagination format)
+        if (responseData && typeof responseData === 'object' && 'data' in responseData && 'total' in responseData) {
+          const purchasesArray = Array.isArray(responseData.data) ? responseData.data : [];
+          setPurchases(purchasesArray);
+          
+          // Update pagination state
+          setPagination({
+            current_page: responseData.current_page ?? page,
+            last_page: responseData.last_page ?? Math.ceil((responseData.total || 0) / (responseData.per_page || pagination.per_page)),
+            per_page: responseData.per_page ?? pagination.per_page,
+            total: responseData.total ?? 0
+          });
+        } else {
+          const purchasesData = responseData.data || responseData;
+          const purchasesArray = Array.isArray(purchasesData) ? purchasesData : [];
+          setPurchases(purchasesArray);
+        }
+        console.log('🔍 Purchases data:', responseData);
       } else {
         setPurchases([]);
         toast.error(response.message || 'Gagal memuat data pembelian');
@@ -104,13 +129,13 @@ const PurchaseList: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [searchTerm, statusFilter, supplierFilter, outletFilter]);
+  }, [searchTerm, statusFilter, supplierFilter, outletFilter, pagination.per_page]);
 
   useEffect(() => {
-    fetchPurchases();
+    fetchPurchases(1); // Reset to page 1 when filters change
     fetchSuppliers();
     fetchOutlets();
-  }, [fetchPurchases]);
+  }, [searchTerm, statusFilter, supplierFilter, outletFilter]); // Only reset on filter changes
 
   const fetchSuppliers = async () => {
     try {
@@ -145,11 +170,15 @@ const PurchaseList: React.FC = () => {
   };
 
   const handleSearch = () => {
-    fetchPurchases();
+    fetchPurchases(1); // Reset to page 1 on search
+  };
+
+  const handlePageChange = (page: number) => {
+    fetchPurchases(page);
   };
 
   const handleDelete = async (id: number) => {
-    const isSuperAdmin = user?.role === 'super_admin' || (user?.role as any)?.name === 'super_admin';
+    const isSuperAdmin = user && (user.role === 'Super Admin' || user.role === 'super_admin');
 
     if (!isSuperAdmin) {
       toast.error('Hanya super admin yang bisa menghapus purchase');
@@ -164,7 +193,7 @@ const PurchaseList: React.FC = () => {
       const response = await apiService.deletePurchase(id);
       if (response.success) {
         toast.success('Pembelian berhasil dihapus');
-        fetchPurchases();
+        fetchPurchases(pagination.current_page);
       } else {
         toast.error(response.message || 'Gagal menghapus pembelian');
       }
@@ -195,7 +224,7 @@ const PurchaseList: React.FC = () => {
 
   const handleEdit = (purchase: Purchase) => {
     // Super admin can edit any purchase, others can only edit pending purchases
-    const isSuperAdmin = user?.role === 'super_admin' || (user?.role as any)?.name === 'super_admin';
+    const isSuperAdmin = user && (user.role === 'Super Admin' || user.role === 'super_admin');
     if (isSuperAdmin || purchase.status === 'pending') {
       navigate(`/purchases/${purchase.id}/edit`);
     } else {
@@ -459,7 +488,7 @@ const PurchaseList: React.FC = () => {
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                         <div className="flex items-center gap-2">
                           <button
-                            onClick={() => window.location.href = `/purchases/${purchase.id}`}
+                            onClick={() => navigate(`/purchases/${purchase.id}`)}
                             className="text-blue-600 hover:text-blue-900"
                             title="Lihat Detail"
                           >
@@ -469,13 +498,13 @@ const PurchaseList: React.FC = () => {
                             onClick={() => handleEdit(purchase)}
                             className="text-yellow-600 hover:text-yellow-900"
                             title="Edit"
-                            disabled={purchase.status === 'paid' && !(user?.role === 'super_admin' || (user?.role as any)?.name === 'super_admin')}
+                            disabled={purchase.status === 'paid' && !(user && (user.role === 'Super Admin' || user.role === 'super_admin'))}
                           >
                             <PencilIcon className="h-5 w-5" />
                           </button>
 
                           {/* Status Update Buttons for Super Admin */}
-                          {(user?.role === 'super_admin' || (user?.role as any)?.name === 'super_admin') && (
+                          {(user && (user.role === 'Super Admin' || user.role === 'super_admin')) && (
                             <>
                               {purchase.status === 'pending' && (
                                 <button
@@ -499,7 +528,7 @@ const PurchaseList: React.FC = () => {
                           )}
 
                           {/* Delete button - Super Admin only */}
-                          {(user?.role === 'super_admin' || (user?.role as any)?.name === 'super_admin') && (
+                          {(user && (user.role === 'Super Admin' || user.role === 'super_admin')) && (
                             <button
                               onClick={() => handleDelete(purchase.id)}
                               className="text-red-600 hover:text-red-900"
@@ -526,6 +555,15 @@ const PurchaseList: React.FC = () => {
               </tbody>
             </table>
           </div>
+
+          {/* Pagination */}
+          {!loading && pagination.total > 0 && (
+            <Pagination
+              pagination={pagination}
+              onPageChange={handlePageChange}
+              loading={loading}
+            />
+          )}
         </div>
 
         {/* Create Purchase - Now redirects to separate page */}

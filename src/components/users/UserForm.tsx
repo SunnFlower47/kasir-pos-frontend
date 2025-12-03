@@ -171,8 +171,6 @@ const UserForm: React.FC<UserFormProps> = ({ user, outlets, onSuccess, onCancel 
         })
       };
 
-      console.log('💾 Submitting user data:', { ...submitData, password: '***' });
-
       let response;
       if (user) {
         response = await apiService.updateUser(user.id, submitData);
@@ -181,7 +179,7 @@ const UserForm: React.FC<UserFormProps> = ({ user, outlets, onSuccess, onCancel 
       }
 
       if (response.success) {
-        toast.success(`✅ User berhasil ${user ? 'diperbarui' : 'ditambahkan'}`);
+        toast.success(`User berhasil ${user ? 'diperbarui' : 'ditambahkan'}`);
         onSuccess();
       } else {
         toast.error(response.message || `Gagal ${user ? 'memperbarui' : 'menambahkan'} user`);

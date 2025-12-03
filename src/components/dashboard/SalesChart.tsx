@@ -21,11 +21,15 @@ type ChartType = 'revenue' | 'transactions' | 'both';
 const SalesChart: React.FC<SalesChartProps> = ({ data, loading }) => {
   const [chartType, setChartType] = React.useState<ChartType>('both');
   const formatCurrency = (value: number) => {
+    const numValue = Number(value);
+    if (isNaN(numValue) || !isFinite(numValue)) {
+      return 'Rp 0';
+    }
     return new Intl.NumberFormat('id-ID', {
       style: 'currency',
       currency: 'IDR',
       minimumFractionDigits: 0,
-    }).format(value);
+    }).format(numValue);
   };
 
   const formatDate = (dateString: string) => {
@@ -42,6 +46,8 @@ const SalesChart: React.FC<SalesChartProps> = ({ data, loading }) => {
   const chartData = rawData.map(item => ({
     ...item,
     date: formatDate(item.date),
+    revenue: Number(item.revenue || 0),
+    transactions: Number(item.transactions || 0),
   }));
 
   if (loading) {
@@ -263,22 +269,38 @@ const SalesChart: React.FC<SalesChartProps> = ({ data, loading }) => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="text-center">
             <p className="text-2xl font-semibold text-gray-900">
-              {formatCurrency(chartData.reduce((sum, item) => sum + item.revenue, 0))}
+              {formatCurrency(
+                chartData.reduce((sum, item) => {
+                  const revenue = Number(item.revenue) || 0;
+                  return sum + revenue;
+                }, 0)
+              )}
             </p>
             <p className="text-sm text-gray-600">Total Pendapatan</p>
           </div>
           <div className="text-center">
             <p className="text-2xl font-semibold text-gray-900">
-              {chartData.reduce((sum, item) => sum + item.transactions, 0)}
+              {chartData.reduce((sum, item) => {
+                const transactions = Number(item.transactions) || 0;
+                return sum + transactions;
+              }, 0)}
             </p>
             <p className="text-sm text-gray-600">Total Transaksi</p>
           </div>
           <div className="text-center">
             <p className="text-2xl font-semibold text-gray-900">
-              {formatCurrency(
-                chartData.reduce((sum, item) => sum + item.revenue, 0) /
-                chartData.reduce((sum, item) => sum + item.transactions, 0) || 0
-              )}
+              {(() => {
+                const totalRevenue = chartData.reduce((sum, item) => {
+                  const revenue = Number(item.revenue) || 0;
+                  return sum + revenue;
+                }, 0);
+                const totalTransactions = chartData.reduce((sum, item) => {
+                  const transactions = Number(item.transactions) || 0;
+                  return sum + transactions;
+                }, 0);
+                const average = totalTransactions > 0 ? totalRevenue / totalTransactions : 0;
+                return formatCurrency(average);
+              })()}
             </p>
             <p className="text-sm text-gray-600">Rata-rata per Transaksi</p>
           </div>

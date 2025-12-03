@@ -3,6 +3,7 @@ import { Supplier } from '../../types';
 import { apiService } from '../../services/api';
 import toast from 'react-hot-toast';
 import SupplierForm from './SupplierForm';
+import Pagination, { PaginationData } from '../common/Pagination';
 import {
   PlusIcon,
   MagnifyingGlassIcon,
@@ -18,20 +19,41 @@ const SupplierList: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
+  const [pagination, setPagination] = useState<PaginationData>({
+    current_page: 1,
+    last_page: 1,
+    per_page: 15,
+    total: 0
+  });
 
-  const fetchSuppliers = React.useCallback(async () => {
+  const fetchSuppliers = React.useCallback(async (page = 1) => {
     setLoading(true);
     try {
-      console.log('🔄 Fetching suppliers from API...');
       const response = await apiService.getSuppliers({
-        search: searchTerm || undefined
+        search: searchTerm || undefined,
+        page,
+        per_page: pagination.per_page
       });
 
       if (response.success && response.data) {
-        const suppliersData = response.data.data || response.data;
-        setSuppliers(Array.isArray(suppliersData) ? suppliersData : []);
-        console.log('✅ Suppliers loaded:', suppliersData.length, 'items');
-        console.log('🔍 Suppliers data:', suppliersData);
+        const responseData: any = response.data;
+        
+        // Check if it's paginated response (Laravel pagination format)
+        if (responseData && typeof responseData === 'object' && 'data' in responseData && 'total' in responseData) {
+          const suppliersArray = Array.isArray(responseData.data) ? responseData.data : [];
+          setSuppliers(suppliersArray);
+          
+          // Update pagination state
+          setPagination({
+            current_page: responseData.current_page ?? page,
+            last_page: responseData.last_page ?? Math.ceil((responseData.total || 0) / (responseData.per_page || pagination.per_page)),
+            per_page: responseData.per_page ?? pagination.per_page,
+            total: responseData.total ?? 0
+          });
+        } else {
+          const suppliersData = responseData.data || responseData;
+          setSuppliers(Array.isArray(suppliersData) ? suppliersData : []);
+        }
       } else {
         console.error('❌ Failed to fetch suppliers:', response.message);
         toast.error('Failed to load suppliers');
@@ -45,11 +67,11 @@ const SupplierList: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [searchTerm]);
+  }, [searchTerm, pagination.per_page]);
 
   useEffect(() => {
-    fetchSuppliers();
-  }, [fetchSuppliers]);
+    fetchSuppliers(1); // Reset to page 1 when search term changes
+  }, [searchTerm]); // Only reset on search term change
 
   const handleAdd = () => {
     setEditingSupplier(null);
@@ -58,7 +80,6 @@ const SupplierList: React.FC = () => {
 
   const handleViewDetail = (supplier: Supplier) => {
     // TODO: Open supplier detail modal with products
-    console.log('View detail for supplier:', supplier);
     toast.success(`Detail supplier ${supplier.name} akan segera tersedia`);
   };
 
@@ -73,12 +94,11 @@ const SupplierList: React.FC = () => {
     }
 
     try {
-      console.log('🔄 Deleting supplier:', supplier.id);
       const response = await apiService.deleteSupplier(supplier.id);
 
       if (response.success) {
         toast.success('Supplier deleted successfully');
-        fetchSuppliers(); // Refresh list
+        fetchSuppliers(pagination.current_page); // Refresh list
       } else {
         toast.error(response.message || 'Failed to delete supplier');
       }
@@ -90,17 +110,14 @@ const SupplierList: React.FC = () => {
   };
 
   const handleFormSuccess = () => {
-    fetchSuppliers(); // Refresh list after successful create/update
+    fetchSuppliers(pagination.current_page); // Refresh list after successful create/update
     setShowForm(false);
     setEditingSupplier(null);
   };
 
-  const filteredSuppliers = suppliers.filter(supplier =>
-    supplier.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    supplier.contact_person?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    supplier.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    supplier.phone?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const handlePageChange = (page: number) => {
+    fetchSuppliers(page);
+  };
 
   return (
     <div className="space-y-6">
@@ -130,7 +147,7 @@ const SupplierList: React.FC = () => {
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-500">Total Suppliers</p>
-              <p className="text-2xl font-semibold text-gray-900">{suppliers.length}</p>
+              <p className="text-2xl font-semibold text-gray-900">{pagination.total || suppliers.length}</p>
             </div>
           </div>
         </div>
@@ -188,49 +205,41 @@ const SupplierList: React.FC = () => {
           <div className="flex items-center justify-center h-64">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
           </div>
-        ) : filteredSuppliers.length === 0 ? (
-          <div className="text-center py-12">
-            <BuildingOfficeIcon className="mx-auto h-12 w-12 text-gray-400" />
-            <h3 className="mt-2 text-sm font-medium text-gray-900">No suppliers found</h3>
-            <p className="mt-1 text-sm text-gray-500">
-              {searchTerm ? 'Try adjusting your search terms.' : 'Get started by adding a new supplier.'}
-            </p>
-            {!searchTerm && (
-              <div className="mt-6">
-                <button
-                  onClick={handleAdd}
-                  className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
-                >
-                  <PlusIcon className="-ml-1 mr-2 h-5 w-5" />
-                  Add Supplier
-                </button>
-              </div>
-            )}
-          </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Supplier
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Contact Person
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Contact Info
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {filteredSuppliers.map((supplier) => (
+          <>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Supplier
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Contact Person
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Contact Info
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Status
+                    </th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {suppliers.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
+                        {searchTerm
+                          ? 'Tidak ada supplier yang sesuai dengan pencarian'
+                          : 'Belum ada supplier'
+                        }
+                      </td>
+                    </tr>
+                  ) : (
+                    suppliers.map((supplier) => (
                   <tr key={supplier.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center">
@@ -302,10 +311,21 @@ const SupplierList: React.FC = () => {
                       </div>
                     </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination */}
+            {!loading && pagination.total > 0 && (
+              <Pagination
+                pagination={pagination}
+                onPageChange={handlePageChange}
+                loading={loading}
+              />
+            )}
+          </>
         )}
       </div>
 

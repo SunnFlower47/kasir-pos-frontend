@@ -7,13 +7,16 @@ import {
   UserCircleIcon,
   ArrowRightOnRectangleIcon,
   UserIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline';
 
 interface HeaderProps {
   onMenuClick: () => void;
+  sidebarOpen?: boolean;
+  onCloseSidebar?: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
+const Header: React.FC<HeaderProps> = ({ onMenuClick, sidebarOpen = false, onCloseSidebar }) => {
   const { user, logout } = useAuth();
 
   const handleLogout = () => {

@@ -5,89 +5,81 @@ class ApiService {
   private api: AxiosInstance;
 
   constructor() {
+    // Detect if running in Electron
+    const isElectron = window.electronAPI?.isElectron || false;
+    
     this.api = axios.create({
-      baseURL: process.env.REACT_APP_API_URL || 'http://localhost:8000/api/v1',
+      baseURL: process.env.REACT_APP_API_URL || 'https://kasir-pos-api.sunnflower.site/api/v1',
       headers: {
         'Content-Type': 'application/json',
-        'Accept': 'application/json',
+        Accept: 'application/json',
+        // Add custom header to identify Electron app
+        'X-Client-Type': isElectron ? 'electron' : 'web',
       },
     });
+
+    // Set version header asynchronously after initialization
+    if (isElectron && window.electronAPI?.getVersion) {
+      window.electronAPI.getVersion().then(version => {
+        this.api.defaults.headers.common['X-Client-Version'] = version || '1.0.0';
+      }).catch(() => {
+        this.api.defaults.headers.common['X-Client-Version'] = '1.0.0';
+      });
+    } else {
+      this.api.defaults.headers.common['X-Client-Version'] = 'web';
+    }
 
     // Request interceptor to add auth token
     this.api.interceptors.request.use(
       (config) => {
-        let token = localStorage.getItem('auth_token');
-
-        // For development, use default token if none exists
-        if (!token && process.env.NODE_ENV === 'development') {
-          token = '61|lVwCOb4dB0hOqJJFCR1YwXybeFwZT26kQ72Tzh1819df0dd3';
-          localStorage.setItem('auth_token', token);
-        }
-
-        // Debug logging (remove in production)
-        if (process.env.NODE_ENV === 'development') {
-          console.log('🔄 API Request:', {
-            url: config.url,
-            method: config.method?.toUpperCase(),
-            hasToken: !!token
-          });
-        }
+        const token = localStorage.getItem('auth_token');
 
         if (token) {
+          config.headers = config.headers ?? {};
           config.headers.Authorization = `Bearer ${token}`;
+        } else if (process.env.NODE_ENV === 'development') {
+          console.warn('[API] Request sent without auth token:', config.url);
         }
+
         return config;
       },
       (error) => {
-        console.error('❌ Request Error:', error);
+        if (process.env.NODE_ENV === 'development') {
+          console.error('[API] Request Error:', error);
+        }
         return Promise.reject(error);
       }
     );
 
     // Response interceptor to handle errors
     this.api.interceptors.response.use(
-      (response) => {
-        // Debug logging (remove in production)
-        if (process.env.NODE_ENV === 'development') {
-          console.log('✅ API Response:', {
-            url: response.config.url,
-            status: response.status,
-            success: response.data?.success
-          });
-        }
-        return response;
-      },
+      (response) => response,
       (error) => {
         const status = error.response?.status;
         const message = error.response?.data?.message || error.message;
-        const url = error.config?.url;
 
-        console.error('❌ API Error:', {
-          url,
-          status,
-          statusText: error.response?.statusText,
-          message,
-          data: error.response?.data
-        });
+        if (process.env.NODE_ENV === 'development') {
+          console.error('[API] Error response:', {
+            url: error.config?.url,
+            status,
+            message,
+          });
+        }
 
-        // Handle different error types
         if (status === 401) {
-          console.warn('🔐 Unauthorized - clearing auth and redirecting');
           localStorage.removeItem('auth_token');
           localStorage.removeItem('user');
-          // Use setTimeout to avoid navigation during API call
           setTimeout(() => {
             window.location.href = '/login';
           }, 100);
-        } else if (status === 403) {
-          console.warn('🚫 Forbidden - insufficient permissions');
-          // Don't redirect, let component handle this
-        } else if (status === 422) {
-          console.warn('📝 Validation Error:', error.response?.data?.errors);
-        } else if (status >= 500) {
-          console.error('🔥 Server Error:', message);
-        } else if (!status) {
-          console.error('🌐 Network Error - no response from server');
+        }
+
+        // 403 Forbidden - user is authenticated but doesn't have permission
+        // Don't redirect to login, let the component handle it
+        if (status === 403) {
+          if (process.env.NODE_ENV === 'development') {
+            console.warn('[API] Forbidden access:', error.config?.url);
+          }
         }
 
         return Promise.reject(error);
@@ -271,8 +263,15 @@ class ApiService {
     return this.delete(`/products/${id}`);
   }
 
-  async getProductByBarcode(barcode: string) {
-    return this.get('/products/barcode/scan', { barcode });
+  async getProductByBarcode(barcode: string, outletId: number) {
+    if (!outletId) {
+      throw new Error('Outlet ID is required to scan barcode');
+    }
+
+    return this.get('/products/barcode/scan', {
+      barcode,
+      outlet_id: outletId,
+    });
   }
 
   // Category and Unit methods moved to the end of the file
@@ -383,6 +382,17 @@ class ApiService {
     return this.delete(`/outlets/${id}`);
   }
 
+  async uploadOutletLogo(outletId: number, file: File) {
+    const formData = new FormData();
+    formData.append('logo', file);
+    
+    return this.api.post(`/outlets/${outletId}/logo`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+  }
+
   // Settings methods
   async getSettings() {
     return this.get('/settings');
@@ -390,6 +400,22 @@ class ApiService {
 
   async updateSettings(data: any) {
     return this.put('/settings', data);
+  }
+
+  async uploadLogo(file: File, type: 'company_logo' | 'app_logo') {
+    const formData = new FormData();
+    formData.append('logo', file);
+    formData.append('type', type);
+    
+    return this.api.post('/settings/logo/upload', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+  }
+
+  async deleteLogo(type: 'company_logo' | 'app_logo') {
+    return this.delete(`/settings/logo/${type}`);
   }
 
   // Supplier methods
@@ -443,11 +469,29 @@ class ApiService {
     return this.get('/reports/purchases', params);
   }
 
+  // Expense methods
+  async getExpenses(params?: any) {
+    return this.get('/expenses', params);
+  }
+
+  async getExpense(id: number) {
+    return this.get(`/expenses/${id}`);
+  }
+
+  async createExpense(data: any) {
+    return this.post('/expenses', data);
+  }
+
+  async updateExpense(id: number, data: any) {
+    return this.put(`/expenses/${id}`, data);
+  }
+
+  async deleteExpense(id: number) {
+    return this.delete(`/expenses/${id}`);
+  }
+
   async getExpensesReport(params: any) {
-    console.log('🔍 API Call: getExpensesReport with params:', params);
-    const response = await this.get('/reports/expenses', params);
-    console.log('🔍 API Response: getExpensesReport:', response);
-    return response;
+    return this.get('/reports/expenses', params);
   }
 
   async getStocksReport(params?: any) {
@@ -455,17 +499,42 @@ class ApiService {
   }
 
   async getProfitReport(params: any) {
-    console.log('🔍 API Call: getProfitReport with params:', params);
-    const response = await this.get('/reports/profit', params);
-    console.log('🔍 API Response: getProfitReport:', response);
-    return response;
+    return this.get('/reports/profit', params);
   }
 
   async getTopProducts(params: any) {
     return this.get('/reports/top-products', params);
   }
 
+  // Advanced Business Intelligence methods
+  async getBusinessIntelligence(params: any) {
+    return this.get('/reports/business-intelligence', params);
+  }
 
+  async getAdvancedAnalytics(params: any) {
+    return this.get('/reports/advanced-analytics', params);
+  }
+
+  async getCustomerInsights(params: any) {
+    return this.get('/reports/customer-insights', params);
+  }
+
+  async getProductInsights(params: any) {
+    return this.get('/reports/product-insights', params);
+  }
+
+  async getFinancialInsights(params: any) {
+    return this.get('/reports/financial-insights', params);
+  }
+
+  // Financial Reports
+  async getFinancialComprehensive(params: any) {
+    return this.get('/reports/financial/comprehensive', params);
+  }
+
+  async getFinancialSummary(params: any) {
+    return this.get('/reports/financial/summary', params);
+  }
 
   async getSystemInfo() {
     return this.get('/system/info');
@@ -557,6 +626,57 @@ class ApiService {
 
   async getUnitById(id: number) {
     return this.get(`/units/${id}`);
+  }
+
+  // Audit Logs
+  async getAuditLogs(params?: {
+    user_id?: number;
+    model_type?: string;
+    event?: string;
+    date_from?: string;
+    date_to?: string;
+    ip_address?: string;
+    per_page?: number;
+    page?: number;
+  }): Promise<ApiResponse<PaginatedResponse<any>>> {
+    return this.get('/audit-logs', params);
+  }
+
+  async getAuditLog(id: number): Promise<ApiResponse<any>> {
+    return this.get(`/audit-logs/${id}`);
+  }
+
+  async getAuditLogStatistics(params?: {
+    date_from?: string;
+    date_to?: string;
+  }): Promise<ApiResponse<any>> {
+    return this.get('/audit-logs/statistics', params);
+  }
+
+  async cleanupAuditLogs(days: number): Promise<ApiResponse<any>> {
+    try {
+      const response: AxiosResponse<any> = await this.api.delete('/audit-logs/cleanup', { data: { days } });
+      
+      if (response.data && typeof response.data === 'object' && 'success' in response.data) {
+        return {
+          success: response.data.success ?? true,
+          data: response.data.data ?? response.data,
+          message: response.data.message ?? 'Success'
+        };
+      }
+      
+      return {
+        success: true,
+        data: response.data,
+        message: 'Success'
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        data: null,
+        message: error.response?.data?.message || error.message || 'Request failed'
+      };
+    }
   }
 }
 

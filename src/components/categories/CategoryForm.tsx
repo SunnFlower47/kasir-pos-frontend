@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Category } from '../../types';
 import { apiService } from '../../services/api';
 import toast from 'react-hot-toast';
+import { invalidateCategoryCache, invalidateProductCache } from '../../utils/cacheInvalidation';
 import { XMarkIcon } from '@heroicons/react/24/outline';
 
 interface CategoryFormProps {
@@ -58,6 +59,9 @@ const CategoryForm: React.FC<CategoryFormProps> = ({
 
       if (response.success) {
         toast.success(category ? 'Kategori berhasil diperbarui' : 'Kategori berhasil ditambahkan');
+        // Invalidate cache before calling onSuccess
+        invalidateCategoryCache();
+        invalidateProductCache(); // Products depend on categories
         onSuccess();
         onClose();
       } else {

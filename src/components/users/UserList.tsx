@@ -40,7 +40,6 @@ const UserList: React.FC = () => {
   const fetchUsers = useCallback(async () => {
     setLoading(true);
     try {
-      console.log('🔄 Fetching users...');
       const params: any = {};
 
       if (searchTerm) params.search = searchTerm;
@@ -54,7 +53,6 @@ const UserList: React.FC = () => {
         const usersData = response.data.data || response.data;
         const usersArray = Array.isArray(usersData) ? usersData : [];
         setUsers(usersArray);
-        console.log('✅ Users loaded:', usersArray.length);
       } else {
         console.warn('⚠️ No users data received, using empty array');
         setUsers([]);
@@ -71,7 +69,6 @@ const UserList: React.FC = () => {
 
   const fetchOutlets = async () => {
     try {
-      console.log('🔄 Fetching outlets...');
       const response = await apiService.getOutlets();
 
       if (response.success && response.data) {
@@ -79,7 +76,6 @@ const UserList: React.FC = () => {
         const outletsData = response.data.data || response.data;
         const outletsArray = Array.isArray(outletsData) ? outletsData : [];
         setOutlets(outletsArray);
-        console.log('✅ Outlets loaded:', outletsArray.length, 'items');
       } else {
         console.warn('⚠️ No outlets data received, using empty array');
         setOutlets([]);
@@ -101,7 +97,6 @@ const UserList: React.FC = () => {
     }
 
     try {
-      console.log('🗑️ Deleting user:', user.id);
       const response = await apiService.deleteUser(user.id);
 
       if (response.success) {
@@ -119,7 +114,6 @@ const UserList: React.FC = () => {
 
   const handleToggleStatus = async (user: User) => {
     try {
-      console.log('🔄 Toggling user status:', user.id);
       const response = await apiService.updateUser(user.id, {
         ...user,
         is_active: !user.is_active

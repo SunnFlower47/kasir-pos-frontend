@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import { apiService } from '../services/api';
+import toast from 'react-hot-toast';
 import {
   ShieldCheckIcon,
   KeyIcon,
@@ -38,61 +39,52 @@ const RolePermissionPage: React.FC = () => {
 
   const fetchRolesAndPermissions = useCallback(async () => {
     try {
-      const token = localStorage.getItem('auth_token'); // Use correct token key
-      console.log('Fetching roles and permissions with token:', token ? 'Token exists' : 'No token');
-
-      // Redirect to login if no token
-      if (!token) {
-        console.log('No token found, redirecting to login');
-        navigate('/login');
-        return;
-      }
-
+      setLoading(true);
+      
       const [rolesResponse, permissionsResponse] = await Promise.all([
-        axios.get('http://kasir-pos-system.test/api/v1/roles', {
-          headers: { Authorization: `Bearer ${token}` }
-        }),
-        axios.get('http://kasir-pos-system.test/api/v1/permissions', {
-          headers: { Authorization: `Bearer ${token}` }
-        })
+        apiService.getRoles(),
+        apiService.getAllPermissions()
       ]);
 
-      console.log('Roles response:', rolesResponse.data);
-      console.log('Permissions response:', permissionsResponse.data);
+      if (!rolesResponse.success) {
+        console.error('Failed to fetch roles:', rolesResponse.message);
+        toast.error(rolesResponse.message || 'Gagal memuat roles');
+        
+        // If unauthorized, apiService interceptor will handle redirect
+        if (rolesResponse.message?.toLowerCase().includes('unauthorized') || 
+            rolesResponse.message?.toLowerCase().includes('forbidden')) {
+          return;
+        }
+      }
 
-      const rolesData = rolesResponse.data.data || rolesResponse.data || [];
-      const permissionsData = permissionsResponse.data.data || permissionsResponse.data || [];
+      if (!permissionsResponse.success) {
+        console.error('Failed to fetch permissions:', permissionsResponse.message);
+        toast.error(permissionsResponse.message || 'Gagal memuat permissions');
+        
+        // If unauthorized, apiService interceptor will handle redirect
+        if (permissionsResponse.message?.toLowerCase().includes('unauthorized') || 
+            permissionsResponse.message?.toLowerCase().includes('forbidden')) {
+          return;
+        }
+      }
+
+      const rolesData = Array.isArray(rolesResponse.data) ? rolesResponse.data : [];
+      const permissionsData = Array.isArray(permissionsResponse.data) ? permissionsResponse.data : [];
 
       setRoles(rolesData);
       setAllPermissions(permissionsData);
 
-      console.log('Set roles:', rolesData);
-      console.log('Set permissions:', permissionsData);
-
       // Set first role as selected by default
       if (rolesData && rolesData.length > 0) {
         setSelectedRole(rolesData[0]);
-        console.log('Selected role:', rolesData[0]);
       }
     } catch (error: any) {
       console.error('Error fetching roles and permissions:', error);
-      if (error.response) {
-        console.error('Error response:', error.response.data);
-        console.error('Error status:', error.response.status);
-
-        // Handle authentication errors
-        if (error.response.status === 401 || error.response.status === 403) {
-          console.log('Authentication failed, redirecting to login');
-          localStorage.removeItem('auth_token'); // Clear invalid token
-          localStorage.removeItem('user');
-          navigate('/login');
-          return;
-        }
-      }
+      toast.error('Terjadi kesalahan saat memuat data');
     } finally {
       setLoading(false);
     }
-  }, [navigate]);
+  }, []);
 
   useEffect(() => {
     fetchRolesAndPermissions();
@@ -109,12 +101,14 @@ const RolePermissionPage: React.FC = () => {
 
     setSaving(true);
     try {
-      const token = localStorage.getItem('auth_token'); // Use correct token key
-      await axios.put(`http://kasir-pos-system.test/api/v1/roles/${selectedRole.id}/permissions`, {
+      const response = await apiService.updateRolePermissions(selectedRole.id, {
         permissions: rolePermissions
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
       });
+
+      if (!response.success) {
+        toast.error(response.message || 'Gagal menyimpan permissions');
+        return;
+      }
 
       // Update local state
       const updatedRole = {
@@ -126,10 +120,10 @@ const RolePermissionPage: React.FC = () => {
         role.id === selectedRole.id ? updatedRole : role
       ));
 
-      alert('Permissions berhasil disimpan!');
-    } catch (error) {
+      toast.success('Permissions berhasil disimpan!');
+    } catch (error: any) {
       console.error('Error saving permissions:', error);
-      alert('Gagal menyimpan permissions');
+      toast.error('Gagal menyimpan permissions');
     } finally {
       setSaving(false);
     }
@@ -144,9 +138,28 @@ const RolePermissionPage: React.FC = () => {
   };
 
   const groupPermissionsByCategory = (permissions: Permission[]) => {
+    const categoryMap: Record<string, string> = {
+      'users': 'User Management',
+      'products': 'Product Management',
+      'categories': 'Category Management',
+      'units': 'Unit Management',
+      'transactions': 'Transaction Management',
+      'purchases': 'Purchase Management',
+      'expenses': 'Expense Management', // Added for expenses
+      'customers': 'Customer Management',
+      'suppliers': 'Supplier Management',
+      'stocks': 'Stock Management',
+      'reports': 'Report Management',
+      'settings': 'Settings Management',
+      'outlets': 'Outlet Management',
+      'promotions': 'Promotion Management',
+      'audit-logs': 'Audit Log Management'
+    };
+
     return permissions.reduce((groups, permission) => {
       const category = permission.name.split('.')[0];
-      const categoryName = category.charAt(0).toUpperCase() + category.slice(1) + ' Management';
+      const categoryName = categoryMap[category] || 
+        (category.charAt(0).toUpperCase() + category.slice(1) + ' Management');
 
       if (!groups[categoryName]) {
         groups[categoryName] = [];
@@ -157,22 +170,25 @@ const RolePermissionPage: React.FC = () => {
   };
 
   const getPermissionAction = (permissionName: string) => {
-    const action = permissionName.split('.')[1];
+    const parts = permissionName.split('.');
+    if (parts.length < 2) return permissionName;
+    
+    const action = parts[1];
     const actionMap: Record<string, string> = {
       'view': 'Lihat',
       'create': 'Tambah',
       'edit': 'Edit',
       'delete': 'Hapus',
-      'tambah': 'Tambah',
-      'kurang': 'Kurang',
+      'refund': 'Refund',
+      'adjustment': 'Penyesuaian',
       'transfer': 'Transfer',
-      'penyesuaian': 'Penyesuaian',
-      'pembelian': 'Pembelian',
-      'penjualan': 'Penjualan',
-      'stok': 'Stok',
-      'profit': 'Profit'
+      'sales': 'Penjualan',
+      'purchases': 'Pembelian',
+      'stocks': 'Stok',
+      'profit': 'Profit',
+      'logs': 'Logs'
     };
-    return actionMap[action] || action;
+    return actionMap[action] || action.charAt(0).toUpperCase() + action.slice(1);
   };
 
   const getRoleColor = (roleName: string) => {
@@ -188,18 +204,6 @@ const RolePermissionPage: React.FC = () => {
 
   const groupedPermissions = groupPermissionsByCategory(allPermissions);
 
-  // Debug info
-  console.log('Current state:', {
-    loading,
-    roles: roles.length,
-    allPermissions: allPermissions.length,
-    selectedRole: selectedRole?.name,
-    rolePermissions: rolePermissions.length,
-    groupedPermissions: Object.keys(groupedPermissions).length,
-    token: localStorage.getItem('auth_token') ? 'EXISTS' : 'MISSING',
-    user: localStorage.getItem('user') ? 'EXISTS' : 'MISSING'
-  });
-
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -211,55 +215,33 @@ const RolePermissionPage: React.FC = () => {
     );
   }
 
-  // Show debug info if no data
+  // Show message if no data after loading
   if (!loading && (roles.length === 0 || allPermissions.length === 0)) {
-    const token = localStorage.getItem('auth_token'); // Use correct token key
-
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
           <div className="bg-white p-8 rounded-lg shadow-sm border border-gray-200 max-w-md">
-            {!token ? (
-              <>
-                <div className="text-red-500 mb-4">
-                  <ShieldCheckIcon className="h-12 w-12 mx-auto" />
-                </div>
-                <h3 className="text-lg font-medium text-gray-900 mb-4">Authentication Required</h3>
-                <p className="text-sm text-gray-600 mb-6">
-                  Anda perlu login sebagai <strong>Super Admin</strong> atau <strong>Admin</strong> untuk mengakses Role & Permission Management.
-                </p>
-                <button
-                  onClick={() => navigate('/login')}
-                  className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700"
-                >
-                  Login Sekarang
-                </button>
-              </>
-            ) : (
-              <>
-                <h3 className="text-lg font-medium text-gray-900 mb-4">Debug Info</h3>
-                <div className="text-left space-y-2 text-sm mb-6">
-                  <p><strong>Roles loaded:</strong> {roles.length}</p>
-                  <p><strong>Permissions loaded:</strong> {allPermissions.length}</p>
-                  <p><strong>Selected role:</strong> {selectedRole?.name || 'None'}</p>
-                  <p><strong>Token exists:</strong> {token ? 'Yes' : 'No'}</p>
-                </div>
-                <div className="space-y-2">
-                  <button
-                    onClick={fetchRolesAndPermissions}
-                    className="w-full px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700"
-                  >
-                    Retry Loading
-                  </button>
-                  <button
-                    onClick={() => navigate('/login')}
-                    className="w-full px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
-                  >
-                    Login Ulang
-                  </button>
-                </div>
-              </>
-            )}
+            <div className="text-red-500 mb-4">
+              <ShieldCheckIcon className="h-12 w-12 mx-auto" />
+            </div>
+            <h3 className="text-lg font-medium text-gray-900 mb-4">Akses Ditolak</h3>
+            <p className="text-sm text-gray-600 mb-6">
+              Anda perlu login sebagai <strong>Super Admin</strong> untuk mengakses Role & Permission Management.
+            </p>
+            <div className="space-y-2">
+              <button
+                onClick={fetchRolesAndPermissions}
+                className="w-full px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700"
+              >
+                Coba Lagi
+              </button>
+              <button
+                onClick={() => navigate('/dashboard')}
+                className="w-full px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+              >
+                Kembali ke Dashboard
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -363,14 +345,32 @@ const RolePermissionPage: React.FC = () => {
 
             {/* Permission Grid */}
             <div className="p-6 space-y-6">
-              {Object.entries(groupedPermissions).map(([category, permissions]) => (
+              {Object.entries(groupedPermissions)
+                .sort(([a], [b]) => a.localeCompare(b)) // Sort categories alphabetically
+                .map(([category, permissions]) => (
                 <div key={category}>
                   <h4 className="text-base font-medium text-gray-900 mb-4 flex items-center gap-2">
                     <KeyIcon className="h-4 w-4 text-gray-500" />
                     {category}
+                    <span className="text-xs font-normal text-gray-500">
+                      ({permissions.length} permissions)
+                    </span>
                   </h4>
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-                    {permissions.map((permission) => {
+                    {permissions
+                      .sort((a, b) => {
+                        // Sort by action: view, create, edit, delete
+                        const order = ['view', 'create', 'edit', 'delete'];
+                        const aAction = a.name.split('.')[1];
+                        const bAction = b.name.split('.')[1];
+                        const aIndex = order.indexOf(aAction);
+                        const bIndex = order.indexOf(bAction);
+                        if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
+                        if (aIndex !== -1) return -1;
+                        if (bIndex !== -1) return 1;
+                        return a.name.localeCompare(b.name);
+                      })
+                      .map((permission) => {
                       const isSelected = rolePermissions.includes(permission.id);
                       return (
                         <button
@@ -381,6 +381,7 @@ const RolePermissionPage: React.FC = () => {
                               ? 'bg-green-50 border-green-200 text-green-800'
                               : 'bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100'
                           }`}
+                          title={permission.name}
                         >
                           {isSelected ? (
                             <CheckIcon className="h-4 w-4 text-green-600 flex-shrink-0" />
